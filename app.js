@@ -189,11 +189,14 @@ function bindCommon(v) {
 /* ---------------- shared bits ---------------- */
 function txRow(t, showDel) {
   const c = catById(t.category);
+  const isInc = t.type === 'income';
+  const dotColor = isInc ? '#7fb98a' : c.color;
+  const catLabel = isInc ? 'הכנסה' : c.he;
   return `<div class="tx-row" data-id="${t.id}">
-    <span class="tx-dot" style="background:${c.color}"></span>
+    <span class="tx-dot" style="background:${dotColor}"></span>
     <div class="tx-main">
       <div class="tx-merchant">${esc(t.merchant) || '<span class="muted">ללא שם</span>'}</div>
-      <div class="tx-sub">${esc(c.he)} · ${fmtDateIL(t.date)}${t.notes ? ' · ' + esc(t.notes) : ''}</div>
+      <div class="tx-sub">${esc(catLabel)} · ${fmtDateIL(t.date)}${t.notes ? ' · ' + esc(t.notes) : ''}</div>
     </div>
     <div class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '−'}${fmtMoney(t.amount)}</div>
     ${showDel ? `<button class="tx-del" data-del="${t.id}" aria-label="מחיקה">×</button>` : ''}
@@ -236,7 +239,7 @@ function vDashboard(v) {
     ${DB.data.tx.length === 0 ? `
       <div class="empty">
         <div class="big">ברוכים הבאים ל־Shekel Sense</div>
-        <div>עוד לא נרשמה אף עסקה.<br>הוסיפו הוצאה ראשונה, או ייבאו דף חשבון — והקסם מתחיל.</div>
+        <div>עוד לא נרשמה אף עסקה.<br>הוסיפו עסקה ראשונה, או ייבאו דף חשבון — והקסם מתחיל.</div>
         <div class="btn-row" style="margin-top:14px">
           <button class="btn" data-go="add">הוספת הוצאה</button>
           <button class="btn btn-ghost" data-go="import">ייבוא</button>
@@ -307,15 +310,16 @@ function vAdd(v) {
       </div>
       <div class="field">
         <label>עסק / תיאור</label>
-        <input type="text" id="f-merchant" list="merchant-list" placeholder="למשל: שופרסל" autocomplete="off">
+        <input type="text" id="f-merchant" list="merchant-list" placeholder="${addType === 'income' ? 'למשל: מעסיק' : 'למשל: שופרסל'}" autocomplete="off">
         <datalist id="merchant-list">${[...new Set(DB.data.tx.map(t => t.merchant).filter(Boolean))].slice(0, 60).map(m => `<option value="${esc(m)}">`).join('')}</datalist>
       </div>
+      ${addType === 'income' ? '' : `
       <div class="field">
         <label>קטגוריה <span class="muted small" id="cat-hint"></span></label>
         <div class="chip-row" id="cat-chips">
           ${CATS.map(c => `<button class="chip" data-cat="${c.id}"><span class="dot" style="background:${c.color}"></span>${c.he}</button>`).join('')}
         </div>
-      </div>
+      </div>`}
       <div class="field">
         <label>תאריך</label>
         <input type="date" id="f-date" value="${todayISO()}">
@@ -336,11 +340,12 @@ function vAdd(v) {
   const mInput = $('#f-merchant');
   mInput.addEventListener('input', () => {
     const g = guessCategory(mInput.value);
+    const hint = $('#cat-hint');
     if (mInput.value.trim().length > 1) {
       pick(g);
       const known = DB.data.rules[normMerchant(mInput.value)];
-      $('#cat-hint').textContent = known ? '· נלמד ממך' : '· ניחוש אוטומטי';
-    } else { $('#cat-hint').textContent = ''; }
+      if (hint) hint.textContent = known ? '· נלמד ממך' : '· ניחוש אוטומטי';
+    } else if (hint) { hint.textContent = ''; }
   });
   $('#f-save').addEventListener('click', () => {
     const amount = parseFloat($('#f-amount').value);
@@ -400,15 +405,21 @@ function vBudgets(v) {
         </div>`).join('') : '<div class="empty"><div class="big">עוד אין תקציבים</div><div>הגדירו תקציב חודשי לכל קטגוריה — הפס יראה כמה נשאר.</div></div>'}
     </div>
     <div class="card">
-      <h3>הוצאות קבועות (תבניות)</h3>
+      <h3>תבניות קבועות</h3>
+      <p class="small muted" style="margin-top:-6px">הוצאות או הכנסות שחוזרות כל חודש — שכר דירה, משכורת, מנויים.</p>
       <div id="rec-list">${recurringListHTML()}</div>
       <hr class="divider">
-      <div class="field"><label>עסק</label><input type="text" id="r-merchant" placeholder="למשל: שכר דירה"></div>
+      <div class="type-toggle" id="r-type" style="margin-bottom:12px">
+        <button data-rt="expense" class="on-expense">הוצאה קבועה</button>
+        <button data-rt="income">הכנסה קבועה</button>
+      </div>
+      <div class="field"><label>עסק / תיאור</label><input type="text" id="r-merchant" placeholder="למשל: שכר דירה"></div>
+      <button class="btn btn-ghost" id="r-salary" style="margin-top:-6px;margin-bottom:14px">מילוי מהיר: משכורת</button>
       <div class="btn-row">
         <div class="field" style="flex:1;margin:0"><label>סכום</label><input type="number" id="r-amount" inputmode="decimal" min="0"></div>
         <div class="field" style="flex:1;margin:0"><label>יום בחודש</label><input type="number" id="r-day" min="1" max="28" value="1"></div>
       </div>
-      <div class="field" style="margin-top:10px"><label>קטגוריה</label>
+      <div class="field" id="r-cat-field" style="margin-top:10px"><label>קטגוריה</label>
         <select id="r-cat">${CATS.map(c => `<option value="${c.id}">${c.he}</option>`).join('')}</select>
       </div>
       <button class="btn btn-ghost" id="r-add">הוספת תבנית קבועה</button>
@@ -421,11 +432,29 @@ function vBudgets(v) {
     DB.data.budgets[cid] = Math.round(amt * 100) / 100;
     DB.save(); render(); toast('התקציב נשמר');
   });
+  let recType = 'expense';
+  const rtBtns = $$('#r-type button');
+  const setRecType = (t) => {
+    recType = t;
+    rtBtns.forEach(b => {
+      b.classList.remove('on-expense', 'on-income');
+      if (b.dataset.rt === t) b.classList.add(t === 'income' ? 'on-income' : 'on-expense');
+    });
+    const cf = $('#r-cat-field');
+    if (cf) cf.style.display = t === 'income' ? 'none' : '';
+  };
+  rtBtns.forEach(b => b.addEventListener('click', () => setRecType(b.dataset.rt)));
+  $('#r-salary').addEventListener('click', () => {
+    $('#r-merchant').value = 'משכורת';
+    setRecType('income');
+    $('#r-amount').focus();
+    toast('מלאו סכום ויום בחודש');
+  });
   $('#r-add').addEventListener('click', () => {
     const merchant = $('#r-merchant').value.trim(), amount = parseFloat($('#r-amount').value);
     const day = Math.min(28, Math.max(1, parseInt($('#r-day').value) || 1));
     if (!merchant || !amount || amount <= 0) { toast('נא למלא עסק וסכום'); return; }
-    DB.data.recurring.push({ id: uid(), merchant, amount: Math.round(amount * 100) / 100, category: $('#r-cat').value, day, active: true });
+    DB.data.recurring.push({ id: uid(), type: recType, merchant, amount: Math.round(amount * 100) / 100, category: recType === 'income' ? 'income' : $('#r-cat').value, day, active: true });
     DB.save(); render(); toast('התבנית נוספה');
   });
   $('#r-apply').addEventListener('click', applyRecurring);
@@ -436,14 +465,19 @@ function vBudgets(v) {
 }
 function recurringListHTML() {
   if (!DB.data.recurring.length) return '<div class="muted">אין תבניות עדיין.</div>';
-  return DB.data.recurring.map(r => `
+  return DB.data.recurring.map(r => {
+    const type = r.type || 'expense';
+    const isInc = type === 'income';
+    const c = catById(r.category);
+    return `
     <div class="tx-row">
-      <span class="tx-dot" style="background:${catById(r.category).color}"></span>
+      <span class="tx-dot" style="background:${isInc ? '#7fb98a' : c.color}"></span>
       <div class="tx-main"><div class="tx-merchant">${esc(r.merchant)}</div>
-      <div class="tx-sub">כל חודש ביום ${r.day}</div></div>
-      <div class="tx-amount expense">${fmtMoney(r.amount)}</div>
+      <div class="tx-sub">כל חודש ביום ${r.day} · ${isInc ? 'הכנסה' : 'הוצאה'}</div></div>
+      <div class="tx-amount ${type}">${isInc ? '+' : '−'}${fmtMoney(r.amount)}</div>
       <button class="tx-del" data-rdel="${r.id}" aria-label="מחיקת תבנית">×</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 function applyRecurring() {
   const mk = monthKeyOf(todayISO());
@@ -451,15 +485,16 @@ function applyRecurring() {
   let added = 0;
   for (const r of DB.data.recurring) {
     if (!r.active) continue;
+    const type = r.type || 'expense';
     const date = `${y}-${String(m).padStart(2, '0')}-${String(r.day).padStart(2, '0')}`;
     const exists = DB.data.tx.some(t => t.source === 'recurring:' + r.id && monthKeyOf(t.date) === mk);
     if (exists) continue;
-    DB.data.tx.push({ id: uid(), type: 'expense', amount: r.amount, merchant: r.merchant, category: r.category, date, notes: 'הוצאה קבועה', source: 'recurring:' + r.id, createdAt: Date.now() });
-    learnRule(r.merchant, r.category);
+    DB.data.tx.push({ id: uid(), type, amount: r.amount, merchant: r.merchant, category: type === 'income' ? 'income' : r.category, date, notes: type === 'income' ? 'הכנסה קבועה' : 'הוצאה קבועה', source: 'recurring:' + r.id, createdAt: Date.now() });
+    if (type === 'expense' && r.merchant) learnRule(r.merchant, r.category);
     added++;
   }
   DB.save(); render();
-  toast(added ? `נוספו ${added} הוצאות קבועות` : 'כל התבניות כבר הוחלו החודש');
+  toast(added ? `נוספו ${added} עסקאות קבועות` : 'כל התבניות כבר הוחלו החודש');
 }
 
 /* ---------------- insights ---------------- */
@@ -500,8 +535,11 @@ function vInsights(v) {
       <h3>החודש מול חודש שעבר</h3>
       <div class="kv"><span class="k">${hebMonthLabel(prev)}</span><span>${fmtMoney(prv.exp)}</span></div>
       <div class="kv"><span class="k">${hebMonthLabel(mk)}</span><span>${fmtMoney(cur.exp)}</span></div>
-      <div class="kv"><span class="k">שינוי</span>
+      <div class="kv"><span class="k">שינוי בהוצאות</span>
         <span style="color:${delta <= 0 ? 'var(--green)' : 'var(--red)'}">${delta > 0 ? '+' : ''}${fmtMoney(delta)} (${deltaPct > 0 ? '+' : ''}${deltaPct}%)</span></div>
+      <div class="kv"><span class="k">הכנסות החודש</span><span>${fmtMoney(cur.inc)}</span></div>
+      <div class="kv"><span class="k">מאזן (הכנסות פחות הוצאות)</span>
+        <span style="color:${cur.net >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoney(cur.net)}</span></div>
     </div>
     <div class="card">
       <h3>עסקים מובילים החודש</h3>
@@ -593,7 +631,9 @@ function vImport(v) {
     <div class="card">
       <h3>ייבוא מקובץ CSV</h3>
       <p class="small muted">מתאים לייצוא מדפי בנק וחברות אשראי ישראליות. בחרו קובץ, מפו את העמודות, ובדקו לפני הייבוא.</p>
-      <input type="file" id="csv-file" accept=".csv,.txt" style="margin-bottom:10px">
+      <button class="btn btn-ghost" id="csv-pick">בחר קובץ CSV</button>
+      <input type="file" id="csv-file" accept=".csv,.txt" style="display:none">
+      <div class="small muted file-name" id="csv-name"></div>
       <div id="csv-map"></div>
       <div id="csv-preview"></div>
     </div>
@@ -613,7 +653,12 @@ function vImport(v) {
       <p class="small muted" style="margin-top:10px">הגיבוי כולל את כל העסקאות, התקציבים, החוקים והתבניות. שמרו אותו במקום בטוח.</p>
     </div>
   `;
-  $('#csv-file').addEventListener('change', onCsvFile);
+  $('#csv-pick').addEventListener('click', () => $('#csv-file').click());
+  $('#csv-file').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    $('#csv-name').textContent = f ? 'קובץ נבחר: ' + f.name : '';
+    onCsvFile(e);
+  });
   $('#bk-export').addEventListener('click', exportBackup);
   $('#bk-import-btn').addEventListener('click', () => $('#bk-import').click());
   $('#bk-import').addEventListener('change', onBackupFile);
@@ -736,8 +781,9 @@ function gmailEnsureScript(cb) {
 function gmailSync() {
   const clientId = (DB.data.settings.clientId || '').trim();
   if (!clientId) {
-    toast('נא להגדיר Client ID בהגדרות תחילה');
+    gmailSetupOpen = true; gmailStep = 1;
     go('settings');
+    toast('חברו את Gmail קודם — הגדרה חד־פעמית של כ־10 דקות');
     return;
   }
   const status = $('#gmail-status');
@@ -853,30 +899,113 @@ function gmailReview(cands) {
   });
 }
 
+/* ---------------- Gmail guided setup ---------------- */
+let gmailSetupOpen = false;
+let gmailStep = 1;
+
+function gmailStepsHTML() {
+  const steps = [
+    {
+      title: 'צרו פרויקט והפעילו את Gmail API',
+      body: `
+        <ol class="steps">
+          <li>פתחו בדפדפן: <code class="inline" dir="ltr">console.cloud.google.com</code> והתחברו עם חשבון הגוגל שלכם.</li>
+          <li>צרו פרויקט חדש — קראו לו למשל <b>Shekel Sense</b>.</li>
+          <li>בתפריט הצד: <b>APIs &amp; Services</b> ← <b>Library</b>.</li>
+          <li>חפשו <b>Gmail API</b> ולחצו <b>Enable</b>.</li>
+        </ol>`
+    },
+    {
+      title: 'אשרו את מסך ההסכמה',
+      body: `
+        <ol class="steps">
+          <li>בתפריט: <b>APIs &amp; Services</b> ← <b>OAuth consent screen</b>.</li>
+          <li>בחרו <b>External</b> ולחצו <b>Create</b>.</li>
+          <li>מלאו שם אפליקציה (<b>Shekel Sense</b>) וכתובת מייל — שלכם.</li>
+          <li>הוסיפו את ההרשאה <code class="inline" dir="ltr">gmail.readonly</code> — קריאת מיילים בלבד, שום דבר לא נשלח.</li>
+          <li>הוסיפו את כתובת הג׳ימייל שלכם תחת <b>Test users</b> ושמרו.</li>
+        </ol>`
+    },
+    {
+      title: 'צרו מפתח והדביקו אותו כאן',
+      body: `
+        <ol class="steps">
+          <li>בתפריט: <b>APIs &amp; Services</b> ← <b>Credentials</b>.</li>
+          <li><b>Create Credentials</b> ← <b>OAuth client ID</b> ← סוג <b>Web application</b>.</li>
+          <li>תחת <b>Authorized JavaScript origins</b> הוסיפו בדיוק את הכתובת הזו:<br><code class="inline" dir="ltr">${GMAIL_ORIGIN}</code></li>
+          <li>לחצו <b>Create</b> והעתיקו את ה־<b>Client ID</b> שהתקבל.</li>
+        </ol>
+        <div class="field" style="margin-top:12px">
+          <label>הדביקו כאן את ה־Client ID</label>
+          <input type="text" id="g-client" dir="ltr" placeholder="xxxx.apps.googleusercontent.com" value="${esc(DB.data.settings.clientId || '')}">
+        </div>`
+    }
+  ];
+  const s = steps[gmailStep - 1];
+  return `<div class="gstep"><h4>${s.title}</h4>${s.body}</div>`;
+}
+
+function gmailCardHTML() {
+  const cid = (DB.data.settings.clientId || '').trim();
+  if (cid && !gmailSetupOpen) {
+    return `
+      <div class="kv"><span class="k">סטטוס</span><span style="color:var(--green)">מחובר ✓</span></div>
+      <button class="btn" id="g-sync2">סנכרן Gmail</button>
+      <div id="gmail-status" class="small muted" style="margin-top:8px"></div>
+      <button class="btn btn-ghost" id="g-disconnect" style="margin-top:10px">ניתוק החיבור</button>`;
+  }
+  if (!gmailSetupOpen) {
+    return `
+      <p>מוצא קבלות אוטומטית מתיבת המייל — בלי להקליד.</p>
+      <p class="small muted">נדרשת הגדרה חד־פעמית של כ־10 דקות מול גוגל (בחינם). אחריה — סנכרון בלחיצה אחת, לתמיד. ההרשאה היא קריאה בלבד; שום מייל לא נשלח ושום דבר לא נמחק.</p>
+      <button class="btn" id="g-connect">חבר Gmail</button>`;
+  }
+  return `
+    <div class="small muted" style="margin-bottom:10px">שלב ${gmailStep} מתוך 3 · הגדרה חד־פעמית, כ־10 דקות</div>
+    <div class="steps-dots" aria-hidden="true">${[1, 2, 3].map(i => `<span class="sdot ${i <= gmailStep ? 'on' : ''}"></span>`).join('')}</div>
+    ${gmailStepsHTML()}
+    <div class="btn-row" style="margin-top:14px">
+      ${gmailStep > 1 ? '<button class="btn btn-ghost" id="g-back">הקודם</button>' : ''}
+      ${gmailStep < 3 ? '<button class="btn" id="g-next">הבא</button>' : '<button class="btn" id="g-save3">שמירה וחיבור</button>'}
+    </div>
+    <button class="btn btn-ghost" id="g-cancel" style="margin-top:10px">ביטול</button>`;
+}
+
+function renderGmailCard() {
+  const host = $('#gmail-card');
+  if (!host) return;
+  host.innerHTML = `<h3>חיבור Gmail</h3>` + gmailCardHTML();
+  const q = (id) => document.getElementById(id);
+  if (q('g-connect')) q('g-connect').addEventListener('click', () => { gmailSetupOpen = true; gmailStep = 1; renderGmailCard(); });
+  if (q('g-cancel')) q('g-cancel').addEventListener('click', () => { gmailSetupOpen = false; renderGmailCard(); });
+  if (q('g-next')) q('g-next').addEventListener('click', () => { gmailStep = Math.min(3, gmailStep + 1); renderGmailCard(); });
+  if (q('g-back')) q('g-back').addEventListener('click', () => { gmailStep = Math.max(1, gmailStep - 1); renderGmailCard(); });
+  if (q('g-save3')) q('g-save3').addEventListener('click', () => {
+    const v = q('g-client').value.trim();
+    if (!v) { toast('נא להדביק את ה־Client ID'); return; }
+    DB.data.settings.clientId = v;
+    DB.save();
+    gmailSetupOpen = false;
+    renderGmailCard();
+    toast('Gmail מחובר ✓');
+  });
+  if (q('g-sync2')) q('g-sync2').addEventListener('click', () => gmailSync());
+  if (q('g-disconnect')) q('g-disconnect').addEventListener('click', () => {
+    if (!confirm('לנתק את חיבור Gmail?')) return;
+    DB.data.settings.clientId = '';
+    DB.save();
+    gmailSetupOpen = false;
+    renderGmailCard();
+    toast('החיבור נותק');
+  });
+}
+
 /* ---------------- settings ---------------- */
 function vSettings(v) {
   const s = DB.data.settings;
   v.innerHTML = `
     <h2 class="section-title">הגדרות</h2>
-    <div class="card">
-      <h3>חיבור Gmail</h3>
-      <p class="small muted">הדביקו את ה־Client ID פעם אחת — הוא נשמר רק בדפדפן הזה. אחר כך כל סנכרון הוא חלונית אישור של גוגל, הרשאת קריאה בלבד.</p>
-      <div class="field">
-        <label>Google OAuth Client ID</label>
-        <input type="text" id="s-client" dir="ltr" placeholder="xxxx.apps.googleusercontent.com" value="${esc(s.clientId || '')}">
-      </div>
-      <button class="btn" id="s-save">שמירת Client ID</button>
-      <hr class="divider">
-      <h3>איך מקבלים Client ID? (חד־פעמי, חינם)</h3>
-      <ol class="steps">
-        <li>פתחו <code class="inline">console.cloud.google.com</code> וצרו פרויקט חדש.</li>
-        <li>ב־<code class="inline">APIs &amp; Services → Library</code> הפעילו את <b>Gmail API</b>.</li>
-        <li>ב־<code class="inline">OAuth consent screen</code> בחרו External, מלאו שם אפליקציה ומייל, והוסיפו את ההרשאה <code class="inline">gmail.readonly</code>. הוסיפו את עצמכם כ־Test users.</li>
-        <li>ב־<code class="inline">Credentials → Create Credentials → OAuth client ID</code> בחרו Web application, וב־<b>Authorized JavaScript origins</b> הוסיפו בדיוק:<br><code class="inline">${GMAIL_ORIGIN}</code></li>
-        <li>העתיקו את ה־Client ID שהתקבל והדביקו אותו כאן למעלה.</li>
-      </ol>
-      <p class="small muted">האפליקציה רצה בכתובת הקבועה <code class="inline">${GMAIL_ORIGIN}</code> — אין צורך להוסיף שום כתובת אחרת.</p>
-    </div>
+    <div class="card" id="gmail-card"></div>
     <div class="card">
       <h3>ניהול נתונים</h3>
       <p class="small muted">כל הנתונים נשמרים מקומית בדפדפן הזה בלבד. שום דבר לא עוזב את המכשיר.</p>
@@ -889,10 +1018,7 @@ function vSettings(v) {
       Shekel Sense · גרסה 1.0 · קוד פתוח — הנתונים שלך נשארים אצלך.
     </div>
   `;
-  $('#s-save').addEventListener('click', () => {
-    DB.data.settings.clientId = $('#s-client').value.trim();
-    DB.save(); toast('נשמר');
-  });
+  renderGmailCard();
   $('#s-wipe').addEventListener('click', () => {
     if (!confirm('למחוק את כל הנתונים? אין דרך חזרה.')) return;
     Object.values(K).forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
