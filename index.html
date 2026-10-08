@@ -65,7 +65,24 @@
 <script>
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      function notifyUpdate() {
+        // only when a previous SW was already controlling this page
+        if (navigator.serviceWorker.controller && typeof toast === 'function') {
+          toast('גרסה חדשה הותקנה — מומלץ לרענן');
+        }
+      }
+      // a new worker finished installing (skipWaiting => it takes over at once)
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          if (nw.state === 'installed') notifyUpdate();
+        });
+      });
+      // edge case: page loaded while a fresh worker was already waiting
+      if (reg.waiting) notifyUpdate();
+    }).catch(function () {});
   });
 }
 </script>
