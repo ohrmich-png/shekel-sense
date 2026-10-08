@@ -35,7 +35,9 @@ html, body {
 }
 
 body {
-  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+  /* tabbar height + safe area + breathing room so the last row
+     always sits fully above the fixed nav (tappable at max scroll) */
+  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 28px);
 }
 
 h1, h2, h3, .serif { font-family: var(--serif); font-weight: 500; letter-spacing: 0.01em; }
@@ -49,7 +51,9 @@ h1, h2, h3, .serif { font-family: var(--serif); font-weight: 500; letter-spacing
   align-items: center;
   justify-content: space-between;
   padding: calc(10px + env(safe-area-inset-top, 0px)) 20px 10px;
-  background: linear-gradient(180deg, var(--bg-deep) 0%, rgba(9, 11, 15, 0.92) 100%);
+  /* fully opaque: content scrolling underneath must not show through,
+     so nothing looks tappable when the header is actually covering it */
+  background: linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
 }
