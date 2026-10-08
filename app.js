@@ -222,19 +222,18 @@ function vDashboard(v) {
   const mk = dashMonth;
   const { exp, inc, net } = monthTotals(mk);
   const list = txInMonth(mk).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 8);
-  // planned (not-yet-applied) recurring templates for this month — display only,
-  // never counted in totals or budgets
+  // Planned monthly recurring (not yet applied/recorded): committed for the
+  // whole month from day 1, so they count in the homepage totals regardless
+  // of their day-of-month. Deduped in plannedForMonth — never double-counted.
   const planned = plannedForMonth(mk);
   const pExp = planned.reduce((a, r) => a + ((r.type || 'expense') === 'expense' ? Number(r.amount) || 0 : 0), 0);
   const pInc = planned.reduce((a, r) => a + (r.type === 'income' ? Number(r.amount) || 0 : 0), 0);
-  const plannedCard = planned.length ? `
-      <div class="card">
-        <h3>מתוכנן לחודש <span class="pill">${planned.length}</span></h3>
-        <div class="kv"><span class="k">הוצאות צפויות</span><span>${fmtMoney(pExp)}</span></div>
-        <div class="kv"><span class="k">הכנסות צפויות</span><span>${fmtMoney(pInc)}</span></div>
-        <div style="margin-top:6px">${planned.map(plannedRowHTML).join('')}</div>
-        <p class="small muted" style="margin-top:8px">סכומים מתוכננים אינם נכללים בסיכומים ובתקציבים — עד שיוחלו או שיגיע מועדם.</p>
-      </div>` : '';
+  const totExp = exp + pExp, totInc = inc + pInc, totNet = totInc - totExp;
+  const planParts = [];
+  if (pExp > 0) planParts.push('הוצאות מתוכננות ' + fmtMoney(pExp));
+  if (pInc > 0) planParts.push('הכנסות מתוכננות ' + fmtMoney(pInc));
+  const planNote = planParts.length
+    ? `<div class="small muted plan-note">כולל: ${planParts.join(' · ')}</div>` : '';
   // category breakdown (expenses)
   const byCat = {};
   for (const t of txInMonth(mk)) {
@@ -251,11 +250,11 @@ function vDashboard(v) {
       <button class="nav-btn" id="m-next" aria-label="חודש הבא">›</button>
     </div>
     <div class="summary-grid">
-      <div class="summary-box"><div class="label">הוצאות</div><div class="value expense">${fmtMoney(exp)}</div></div>
-      <div class="summary-box"><div class="label">הכנסות</div><div class="value income">${fmtMoney(inc)}</div></div>
-      <div class="summary-box"><div class="label">מאזן</div><div class="value ${net >= 0 ? 'income' : 'expense'}">${fmtMoney(net)}</div></div>
+      <div class="summary-box"><div class="label">הוצאות</div><div class="value expense">${fmtMoney(totExp)}</div></div>
+      <div class="summary-box"><div class="label">הכנסות</div><div class="value income">${fmtMoney(totInc)}</div></div>
+      <div class="summary-box"><div class="label">מאזן</div><div class="value ${totNet >= 0 ? 'income' : 'expense'}">${fmtMoney(totNet)}</div></div>
     </div>
-    ${plannedCard}
+    ${planNote}
     ${DB.data.tx.length === 0 ? `
       <div class="empty">
         <div class="big">ברוכים הבאים ל־Shekel Sense</div>
@@ -393,6 +392,13 @@ function vBudgets(v) {
     if (t.type !== 'expense') continue;
     spent[t.category] = (spent[t.category] || 0) + Number(t.amount);
   }
+  // budgets track monthly commitments: actual spent + planned recurring
+  // (deduped in plannedForMonth — never double-counted once applied/recorded)
+  for (const r of plannedForMonth(mk)) {
+    if ((r.type || 'expense') !== 'expense') continue;
+    const cid = r.category || 'other';
+    spent[cid] = (spent[cid] || 0) + (Number(r.amount) || 0);
+  }
   const rows = CATS.map(c => {
     const b = Number(DB.data.budgets[c.id]) || 0;
     const s = spent[c.id] || 0;
@@ -519,8 +525,13 @@ function applyRecurring() {
 
 /* ---------------- planned (not-yet-applied) recurring ---------------- */
 // Templates for the viewed month that have no actual transaction yet.
-// Shown on the dashboard as "planned" from the 1st of the month,
-// regardless of their day-of-month. Never counted in totals/budgets.
+// A monthly recurring item is committed for the whole month from day 1,
+// regardless of its day-of-month — so the homepage totals and budget bars
+// count it. Never double-counted: deduped against applied ('recurring:<id>')
+// and manually recorded (same merchant + amount + type) transactions.
+// Projections only — never written to tx. Past months are closed history.
+/* (plannedRowHTML removed — details stay in the templates screen; the
+   homepage shows only the totals impact with a quiet "planned" note) */
 function plannedForMonth(mk) {
   // past months are closed history — no planned items there
   if (mk < monthKeyOf(todayISO())) return [];
@@ -542,20 +553,6 @@ function plannedForMonth(mk) {
     out.push(r);
   }
   return out;
-}
-function plannedRowHTML(r) {
-  const type = r.type || 'expense';
-  const isInc = type === 'income';
-  const c = catById(r.category);
-  return `
-  <div class="tx-row planned">
-    <span class="tx-dot" style="background:${isInc ? '#7fb98a' : c.color}"></span>
-    <div class="tx-main">
-      <div class="tx-merchant">${esc(r.merchant)}<span class="badge-planned">מתוכנן</span></div>
-      <div class="tx-sub">כל חודש ביום ${r.day} · ${isInc ? 'הכנסה' : 'הוצאה'}</div>
-    </div>
-    <div class="tx-amount ${type}">${fmtSigned(isInc ? r.amount : -r.amount)}</div>
-  </div>`;
 }
 
 /* ---------------- insights ---------------- */
