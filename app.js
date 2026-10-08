@@ -501,17 +501,25 @@ function vBudgets(v) {
     </div>
   `;
   $('#b-save').addEventListener('click', () => {
-    const cid = $('#b-cat').value, amt = parseFloat($('#b-amount').value);
+    const catEl = $('#b-cat'), amtEl = $('#b-amount');
+    if (!catEl || !amtEl) { toast('שגיאה בטופס — נסו לרענן'); return; }
+    const cid = catEl.value, amt = parseFloat(amtEl.value);
+    if (!cid) { toast('נא לבחור קטגוריה'); return; }
     if (!amt || amt <= 0) { toast('נא להזין סכום'); return; }
     DB.data.budgets[cid] = Math.round(amt * 100) / 100;
     editingBudget = null;
     DB.save(); render(); toast('התקציב נשמר');
   });
+  // Dismiss the native select popup right after choosing, so it can never
+  // swallow the next tap (e.g. a fast שמור click) and the value is committed.
+  $('#b-cat').addEventListener('change', (e) => e.target.blur());
   const bCancel = $('#b-cancel');
   if (bCancel) bCancel.addEventListener('click', () => { editingBudget = null; render(); });
   $$('[data-bedit]').forEach(b => b.addEventListener('click', () => {
     editingBudget = b.dataset.bedit; render();
-    setTimeout(() => { const f = $('#b-save'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 80);
+    // Instant (not smooth) scroll: a smooth animation moves #b-save under the
+    // cursor, so a fast follow-up tap can miss the button and land silently.
+    setTimeout(() => { const f = $('#b-save'); if (f) f.scrollIntoView({ behavior: 'auto', block: 'center' }); }, 80);
   }));
   $$('[data-bdel]').forEach(b => b.addEventListener('click', () => {
     if (!confirm('למחוק את התקציב?')) return;
@@ -562,7 +570,8 @@ function vBudgets(v) {
     const r = DB.data.recurring.find(x => x.id === b.dataset.redit);
     if (!r) return;
     editingRec = r.id; recType = r.type || 'expense'; render();
-    setTimeout(() => { const f = $('#r-add'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 80);
+    // Instant (not smooth) scroll: keeps the target stationary for fast follow-up taps.
+    setTimeout(() => { const f = $('#r-add'); if (f) f.scrollIntoView({ behavior: 'auto', block: 'center' }); }, 80);
   }));
 }
 function recurringListHTML() {
