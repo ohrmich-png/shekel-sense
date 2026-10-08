@@ -205,8 +205,17 @@ function txRow(t, showDel) {
       <div class="tx-sub">${esc(catLabel)} · ${fmtDateIL(t.date)}${t.notes ? ' · ' + esc(t.notes) : ''}</div>
     </div>
     <div class="tx-amount ${t.type}">${fmtSigned(t.type === 'income' ? t.amount : -t.amount)}</div>
+    <button class="tx-edit" data-edit="${t.id}" aria-label="עריכת עסקה">✎</button>
     ${showDel ? `<button class="tx-del" data-del="${t.id}" aria-label="מחיקה">×</button>` : ''}
   </div>`;
+}
+function bindEdit(scope) {
+  $$('[data-edit]', scope).forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const t = DB.data.tx.find(x => x.id === b.dataset.edit);
+    if (!t) return;
+    editingTx = t.id; addType = t.type || 'expense'; editReturn = route; go('add');
+  }));
 }
 function bindDelete(scope) {
   $$('[data-del]', scope).forEach(b => b.addEventListener('click', (e) => {
@@ -279,6 +288,7 @@ function vDashboard(v) {
   $('#m-prev').addEventListener('click', () => { dashMonth = shiftMonth(dashMonth, -1); render(); });
   $('#m-next').addEventListener('click', () => { dashMonth = shiftMonth(dashMonth, 1); render(); });
   bindDelete(v);
+  bindEdit(v);
 }
 
 /* ---------------- transactions ---------------- */
@@ -311,13 +321,22 @@ function vTransactions(v) {
   $('#t-prev').addEventListener('click', () => { txMonth = shiftMonth(txMonth, -1); render(); });
   $('#t-next').addEventListener('click', () => { txMonth = shiftMonth(txMonth, 1); render(); });
   bindDelete(v);
+  bindEdit(v);
 }
 
 /* ---------------- add expense ---------------- */
 let addType = 'expense';
+let editingTx = null;      // transaction id being edited (null = new entry)
+let editingRec = null;     // recurring template id being edited (null = new)
+let editingBudget = null;  // category id whose budget is being edited (null = new)
+let editReturn = 'dashboard';
+let recType = 'expense';   // recurring form type toggle (module-level so edit mode survives render)
 function vAdd(v) {
+  const et = editingTx ? DB.data.tx.find(t => t.id === editingTx) : null;
+  if (editingTx && !et) editingTx = null;
+  const isEdit = !!et;
   v.innerHTML = `
-    <h2 class="section-title">הוספת ${addType === 'expense' ? 'הוצאה' : 'הכנסה'}</h2>
+    <h2 class="section-title">${isEdit ? 'עריכת עסקה' : 'הוספת ' + (addType === 'expense' ? 'הוצאה' : 'הכנסה')}</h2>
     <div class="card">
       <div class="type-toggle">
         <button id="tt-exp" class="${addType === 'expense' ? 'on-expense' : ''}">הוצאה</button>
@@ -325,11 +344,11 @@ function vAdd(v) {
       </div>
       <div class="field">
         <label>סכום (₪)</label>
-        <input type="number" id="f-amount" class="amount-input" inputmode="decimal" min="0" step="0.01" placeholder="0">
+        <input type="number" id="f-amount" class="amount-input" inputmode="decimal" min="0" step="0.01" placeholder="0" value="${isEdit ? et.amount : ''}">
       </div>
       <div class="field">
         <label>עסק / תיאור</label>
-        <input type="text" id="f-merchant" list="merchant-list" placeholder="${addType === 'income' ? 'למשל: מעסיק' : 'למשל: שופרסל'}" autocomplete="off">
+        <input type="text" id="f-merchant" list="merchant-list" placeholder="${addType === 'income' ? 'למשל: מעסיק' : 'למשל: שופרסל'}" autocomplete="off" value="${isEdit ? esc(et.merchant) : ''}">
         <datalist id="merchant-list">${[...new Set(DB.data.tx.map(t => t.merchant).filter(Boolean))].slice(0, 60).map(m => `<option value="${esc(m)}">`).join('')}</datalist>
       </div>
       ${addType === 'income' ? '' : `
@@ -341,18 +360,20 @@ function vAdd(v) {
       </div>`}
       <div class="field">
         <label>תאריך</label>
-        <input type="date" id="f-date" value="${todayISO()}">
+        <input type="date" id="f-date" value="${isEdit ? et.date : todayISO()}">
       </div>
       <div class="field">
         <label>הערה (אופציונלי)</label>
-        <input type="text" id="f-notes" placeholder="">
+        <input type="text" id="f-notes" placeholder="" value="${isEdit ? esc(et.notes) : ''}">
       </div>
-      <button class="btn" id="f-save">שמירה</button>
+      <button class="btn" id="f-save">${isEdit ? 'שמירת שינויים' : 'שמירה'}</button>
+      ${isEdit ? '<button class="btn btn-ghost" id="f-cancel" style="margin-top:10px">ביטול</button>' : ''}
     </div>
   `;
-  let selCat = 'other';
+  let selCat = (isEdit && et.type === 'expense') ? (et.category || 'other') : 'other';
   const chips = $$('#cat-chips .chip');
   const pick = (id) => { selCat = id; chips.forEach(ch => ch.classList.toggle('selected', ch.dataset.cat === id)); };
+  chips.forEach(ch => ch.classList.toggle('selected', ch.dataset.cat === selCat));
   chips.forEach(ch => ch.addEventListener('click', () => pick(ch.dataset.cat)));
   $('#tt-exp').addEventListener('click', () => { addType = 'expense'; render(); });
   $('#tt-inc').addEventListener('click', () => { addType = 'income'; render(); });
@@ -370,9 +391,24 @@ function vAdd(v) {
     const amount = parseFloat($('#f-amount').value);
     if (!amount || amount <= 0) { toast('נא להזין סכום תקין'); return; }
     const merchant = mInput.value.trim();
+    const amt = Math.round(amount * 100) / 100;
+    const category = addType === 'income' ? 'income' : selCat;
+    if (isEdit && et) {
+      Object.assign(et, {
+        type: addType, amount: amt, merchant, category,
+        date: $('#f-date').value || et.date,
+        notes: $('#f-notes').value.trim()
+      });
+      // keep the learned merchant->category rule in sync with the correction
+      if (addType === 'expense' && merchant) learnRule(merchant, category); else DB.save();
+      editingTx = null;
+      toast('השינויים נשמרו ✓');
+      go(editReturn);
+      return;
+    }
     const t = {
-      id: uid(), type: addType, amount: Math.round(amount * 100) / 100,
-      merchant, category: addType === 'income' ? 'income' : selCat,
+      id: uid(), type: addType, amount: amt,
+      merchant, category,
       date: $('#f-date').value || todayISO(),
       notes: $('#f-notes').value.trim(), source: 'manual', createdAt: Date.now()
     };
@@ -381,6 +417,8 @@ function vAdd(v) {
     toast('נשמר ✓');
     go('dashboard');
   });
+  const cancelBtn = $('#f-cancel');
+  if (cancelBtn) cancelBtn.addEventListener('click', () => { editingTx = null; go(editReturn); });
   setTimeout(() => $('#f-amount').focus(), 60);
 }
 
@@ -404,6 +442,10 @@ function vBudgets(v) {
     const s = spent[c.id] || 0;
     return { c, b, s, pct: b > 0 ? Math.min(100, Math.round(s / b * 100)) : 0 };
   }).filter(r => r.b > 0 || r.s > 0);
+  const er = editingRec ? DB.data.recurring.find(r => r.id === editingRec) : null;
+  if (editingRec && !er) editingRec = null;
+  const isRecEdit = !!er;
+  const eb = editingBudget ? catById(editingBudget) : null;
 
   v.innerHTML = `
     <h2 class="section-title">תקציבים · ${hebMonthLabel(mk)}</h2>
@@ -411,10 +453,11 @@ function vBudgets(v) {
       <div class="field" style="margin-bottom:6px">
         <label>הגדרת תקציב חודשי לקטגוריה</label>
         <div class="copy-row">
-          <select id="b-cat" style="flex:1">${CATS.map(c => `<option value="${c.id}">${c.he}</option>`).join('')}</select>
-          <input type="number" id="b-amount" inputmode="decimal" min="0" placeholder="₪" style="max-width:120px">
+          <select id="b-cat" style="flex:1">${CATS.map(c => `<option value="${c.id}"${editingBudget === c.id ? ' selected' : ''}>${c.he}</option>`).join('')}</select>
+          <input type="number" id="b-amount" inputmode="decimal" min="0" placeholder="₪" style="max-width:120px" value="${editingBudget ? (DB.data.budgets[editingBudget] || '') : ''}">
           <button class="btn" id="b-save">שמור</button>
         </div>
+        ${editingBudget && eb ? `<div class="small" style="margin-top:8px">עורכים תקציב: ${esc(eb.he)} · <button class="linklike" id="b-cancel">ביטול</button></div>` : ''}
       </div>
     </div>
     <div class="card">
@@ -422,7 +465,11 @@ function vBudgets(v) {
         <div class="budget-row">
           <div class="budget-top">
             <span><span class="tx-dot" style="background:${c.color};display:inline-block;margin-left:6px"></span>${esc(c.he)}</span>
-            <span class="muted">${fmtMoney(s)}${b ? ' / ' + fmtMoney(b) : ''}</span>
+            <span class="budget-actions">
+              <span class="muted">${fmtMoney(s)}${b ? ' / ' + fmtMoney(b) : ''}</span>
+              ${b ? `<button class="tx-edit" data-bedit="${c.id}" aria-label="עריכת תקציב">✎</button>
+              <button class="tx-del" data-bdel="${c.id}" aria-label="מחיקת תקציב">×</button>` : ''}
+            </span>
           </div>
           ${b ? `<div class="bar ${s > b ? 'over' : ''}"><i style="width:${pct}%"></i></div>
           <div class="small ${s > b ? '' : 'muted'}" style="margin-top:4px;color:${s > b ? 'var(--red)' : 'var(--muted)'}">
@@ -436,19 +483,20 @@ function vBudgets(v) {
       <div id="rec-list">${recurringListHTML()}</div>
       <hr class="divider">
       <div class="type-toggle" id="r-type" style="margin-bottom:12px">
-        <button data-rt="expense" class="on-expense">הוצאה קבועה</button>
-        <button data-rt="income">הכנסה קבועה</button>
+        <button data-rt="expense" class="${recType === 'expense' ? 'on-expense' : ''}">הוצאה קבועה</button>
+        <button data-rt="income" class="${recType === 'income' ? 'on-income' : ''}">הכנסה קבועה</button>
       </div>
-      <div class="field"><label>עסק / תיאור</label><input type="text" id="r-merchant" placeholder="למשל: שכר דירה"></div>
+      <div class="field"><label>עסק / תיאור</label><input type="text" id="r-merchant" placeholder="למשל: שכר דירה" value="${isRecEdit ? esc(er.merchant) : ''}"></div>
       <button class="btn btn-ghost" id="r-salary" style="margin-top:-6px;margin-bottom:14px">מילוי מהיר: משכורת</button>
       <div class="btn-row">
-        <div class="field" style="flex:1;margin:0"><label>סכום</label><input type="number" id="r-amount" inputmode="decimal" min="0"></div>
-        <div class="field" style="flex:1;margin:0"><label>יום בחודש</label><input type="number" id="r-day" min="1" max="28" value="1"></div>
+        <div class="field" style="flex:1;margin:0"><label>סכום</label><input type="number" id="r-amount" inputmode="decimal" min="0" value="${isRecEdit ? er.amount : ''}"></div>
+        <div class="field" style="flex:1;margin:0"><label>יום בחודש</label><input type="number" id="r-day" min="1" max="28" value="${isRecEdit ? er.day : 1}"></div>
       </div>
-      <div class="field" id="r-cat-field" style="margin-top:10px"><label>קטגוריה</label>
-        <select id="r-cat">${CATS.map(c => `<option value="${c.id}">${c.he}</option>`).join('')}</select>
+      <div class="field" id="r-cat-field" style="margin-top:10px${recType === 'income' ? ';display:none' : ''}"><label>קטגוריה</label>
+        <select id="r-cat">${CATS.map(c => `<option value="${c.id}"${isRecEdit && er.category === c.id ? ' selected' : ''}>${c.he}</option>`).join('')}</select>
       </div>
-      <button class="btn btn-ghost" id="r-add">הוספת תבנית קבועה</button>
+      <button class="btn btn-ghost" id="r-add">${isRecEdit ? 'שמירת שינויים' : 'הוספת תבנית קבועה'}</button>
+      ${isRecEdit ? '<button class="btn btn-ghost" id="r-cancel" style="margin-top:10px">ביטול</button>' : ''}
       <button class="btn" id="r-apply" style="margin-top:10px">החלת החודש (${hebMonthLabel(monthKeyOf(todayISO()))})</button>
     </div>
   `;
@@ -456,9 +504,20 @@ function vBudgets(v) {
     const cid = $('#b-cat').value, amt = parseFloat($('#b-amount').value);
     if (!amt || amt <= 0) { toast('נא להזין סכום'); return; }
     DB.data.budgets[cid] = Math.round(amt * 100) / 100;
+    editingBudget = null;
     DB.save(); render(); toast('התקציב נשמר');
   });
-  let recType = 'expense';
+  const bCancel = $('#b-cancel');
+  if (bCancel) bCancel.addEventListener('click', () => { editingBudget = null; render(); });
+  $$('[data-bedit]').forEach(b => b.addEventListener('click', () => {
+    editingBudget = b.dataset.bedit; render();
+    setTimeout(() => { const f = $('#b-save'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 80);
+  }));
+  $$('[data-bdel]').forEach(b => b.addEventListener('click', () => {
+    if (!confirm('למחוק את התקציב?')) return;
+    delete DB.data.budgets[b.dataset.bdel];
+    DB.save(); render(); toast('התקציב נמחק');
+  }));
   const rtBtns = $$('#r-type button');
   const setRecType = (t) => {
     recType = t;
@@ -476,17 +535,34 @@ function vBudgets(v) {
     $('#r-amount').focus();
     toast('מלאו סכום ויום בחודש');
   });
+  if (isRecEdit) setRecType(er.type || 'expense');
   $('#r-add').addEventListener('click', () => {
     const merchant = $('#r-merchant').value.trim(), amount = parseFloat($('#r-amount').value);
     const day = Math.min(28, Math.max(1, parseInt($('#r-day').value) || 1));
     if (!merchant || !amount || amount <= 0) { toast('נא למלא עסק וסכום'); return; }
-    DB.data.recurring.push({ id: uid(), type: recType, merchant, amount: Math.round(amount * 100) / 100, category: recType === 'income' ? 'income' : $('#r-cat').value, day, active: true });
+    const amt = Math.round(amount * 100) / 100;
+    const category = recType === 'income' ? 'income' : $('#r-cat').value;
+    if (isRecEdit && er) {
+      Object.assign(er, { type: recType, merchant, amount: amt, category, day });
+      editingRec = null;
+      DB.save(); render(); toast('התבנית עודכנה ✓');
+      return;
+    }
+    DB.data.recurring.push({ id: uid(), type: recType, merchant, amount: amt, category, day, active: true });
     DB.save(); render(); toast('התבנית נוספה');
   });
+  const rCancel = $('#r-cancel');
+  if (rCancel) rCancel.addEventListener('click', () => { editingRec = null; render(); });
   $('#r-apply').addEventListener('click', applyRecurring);
   $$('#rec-list [data-rdel]').forEach(b => b.addEventListener('click', () => {
     DB.data.recurring = DB.data.recurring.filter(r => r.id !== b.dataset.rdel);
     DB.save(); render();
+  }));
+  $$('#rec-list [data-redit]').forEach(b => b.addEventListener('click', () => {
+    const r = DB.data.recurring.find(x => x.id === b.dataset.redit);
+    if (!r) return;
+    editingRec = r.id; recType = r.type || 'expense'; render();
+    setTimeout(() => { const f = $('#r-add'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 80);
   }));
 }
 function recurringListHTML() {
@@ -501,6 +577,7 @@ function recurringListHTML() {
       <div class="tx-main"><div class="tx-merchant">${esc(r.merchant)}</div>
       <div class="tx-sub">כל חודש ביום ${r.day} · ${isInc ? 'הכנסה' : 'הוצאה'}</div></div>
       <div class="tx-amount ${type}">${fmtSigned(isInc ? r.amount : -r.amount)}</div>
+      <button class="tx-edit" data-redit="${r.id}" aria-label="עריכת תבנית">✎</button>
       <button class="tx-del" data-rdel="${r.id}" aria-label="מחיקת תבנית">×</button>
     </div>`;
   }).join('');
