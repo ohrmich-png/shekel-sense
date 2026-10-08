@@ -1,5 +1,5 @@
 /* Shekel Sense service worker — cache-first app shell */
-const CACHE = 'shekel-sense-v5';
+const CACHE = 'shekel-sense-v6';
 const SHELL = [
   './',
   'index.html',
