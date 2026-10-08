@@ -245,6 +245,11 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 }
 .steps { margin: 0; padding-inline-start: 20px; color: var(--muted); font-size: 0.9rem; }
 .steps li { margin-bottom: 8px; }
+.gstep h4 { margin: 0 0 10px; font-family: var(--serif); font-size: 1.1rem; color: var(--gold-soft); font-weight: 500; }
+.steps-dots { display: flex; gap: 6px; margin-bottom: 12px; }
+.sdot { width: 28px; height: 6px; border-radius: 999px; background: var(--line); }
+.sdot.on { background: var(--gold); }
+.file-name { margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .steps code, code.inline {
   font-family: ui-monospace, monospace; font-size: 0.82rem;
   background: var(--bg-deep); border: 1px solid var(--line);
