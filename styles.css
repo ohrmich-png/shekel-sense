@@ -176,6 +176,19 @@ h1, h2, h3, .serif { font-family: var(--serif); font-weight: 500; letter-spacing
   font-size: 1.1rem; cursor: pointer; padding: 6px;
 }
 .tx-del:active { color: var(--red); }
+.tx-edit {
+  background: none; border: none; color: var(--faint);
+  font-size: 1rem; cursor: pointer; padding: 10px; min-width: 42px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.tx-edit:active { color: var(--gold); }
+.budget-actions { display: inline-flex; align-items: center; gap: 2px; }
+.linklike {
+  background: none; border: none; padding: 0; margin: 0;
+  color: var(--gold); font-size: inherit; font-family: inherit;
+  cursor: pointer; text-decoration: underline;
+}
 
 /* ---------- planned note under homepage totals (quiet) ---------- */
 .plan-note { text-align: center; margin-top: 2px; font-size: 0.78rem; }
