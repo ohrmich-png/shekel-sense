@@ -14,6 +14,10 @@ const esc = (s) => String(s == null ? '' : s)
 
 const moneyFmt = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' });
 const fmtMoney = (n) => moneyFmt.format(Number(n) || 0);
+// Signed variant: let the he-IL locale place +/- itself (suffix ₪, locale-correct
+// sign position) instead of hand-prepending '+'/'−', which is bidi-fragile.
+const moneyFmtSigned = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', signDisplay: 'exceptZero' });
+const fmtSigned = (n) => moneyFmtSigned.format(Number(n) || 0);
 
 function todayISO() {
   const d = new Date();
@@ -45,7 +49,9 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  // Clear the live-region text when the toast hides so no stale message
+  // lingers in the accessibility tree after the toast disappears.
+  toastTimer = setTimeout(() => { t.classList.remove('show'); t.textContent = ''; }, 2600);
 }
 
 /* ---------------- categories ---------------- */
@@ -198,7 +204,7 @@ function txRow(t, showDel) {
       <div class="tx-merchant">${esc(t.merchant) || '<span class="muted">ללא שם</span>'}</div>
       <div class="tx-sub">${esc(catLabel)} · ${fmtDateIL(t.date)}${t.notes ? ' · ' + esc(t.notes) : ''}</div>
     </div>
-    <div class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '−'}${fmtMoney(t.amount)}</div>
+    <div class="tx-amount ${t.type}">${fmtSigned(t.type === 'income' ? t.amount : -t.amount)}</div>
     ${showDel ? `<button class="tx-del" data-del="${t.id}" aria-label="מחיקה">×</button>` : ''}
   </div>`;
 }
@@ -474,7 +480,7 @@ function recurringListHTML() {
       <span class="tx-dot" style="background:${isInc ? '#7fb98a' : c.color}"></span>
       <div class="tx-main"><div class="tx-merchant">${esc(r.merchant)}</div>
       <div class="tx-sub">כל חודש ביום ${r.day} · ${isInc ? 'הכנסה' : 'הוצאה'}</div></div>
-      <div class="tx-amount ${type}">${isInc ? '+' : '−'}${fmtMoney(r.amount)}</div>
+      <div class="tx-amount ${type}">${fmtSigned(isInc ? r.amount : -r.amount)}</div>
       <button class="tx-del" data-rdel="${r.id}" aria-label="מחיקת תבנית">×</button>
     </div>`;
   }).join('');
@@ -536,7 +542,7 @@ function vInsights(v) {
       <div class="kv"><span class="k">${hebMonthLabel(prev)}</span><span>${fmtMoney(prv.exp)}</span></div>
       <div class="kv"><span class="k">${hebMonthLabel(mk)}</span><span>${fmtMoney(cur.exp)}</span></div>
       <div class="kv"><span class="k">שינוי בהוצאות</span>
-        <span style="color:${delta <= 0 ? 'var(--green)' : 'var(--red)'}">${delta > 0 ? '+' : ''}${fmtMoney(delta)} (${deltaPct > 0 ? '+' : ''}${deltaPct}%)</span></div>
+        <span style="color:${delta <= 0 ? 'var(--green)' : 'var(--red)'}">${fmtSigned(delta)} (${deltaPct > 0 ? '+' : ''}${deltaPct}%)</span></div>
       <div class="kv"><span class="k">הכנסות החודש</span><span>${fmtMoney(cur.inc)}</span></div>
       <div class="kv"><span class="k">מאזן (הכנסות פחות הוצאות)</span>
         <span style="color:${cur.net >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoney(cur.net)}</span></div>
