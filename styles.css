@@ -177,6 +177,16 @@ h1, h2, h3, .serif { font-family: var(--serif); font-weight: 500; letter-spacing
 }
 .tx-del:active { color: var(--red); }
 
+/* ---------- planned (not-yet-applied) recurring ---------- */
+.tx-row.planned { opacity: 0.62; }
+.tx-row.planned .tx-merchant { font-weight: 500; }
+.badge-planned {
+  display: inline-block; font-size: 0.7rem; font-weight: 600;
+  padding: 2px 9px; border-radius: 999px; margin-inline-start: 6px;
+  color: var(--gold-soft); background: var(--gold-dim);
+  border: 1px dashed var(--gold); vertical-align: middle; white-space: nowrap;
+}
+
 /* ---------- forms ---------- */
 .field { margin-bottom: 14px; }
 .field label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
