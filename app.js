@@ -36,6 +36,13 @@ function shiftMonth(mk, delta) {
   while (m > 12) { m -= 12; y++; }
   return y + '-' + String(m).padStart(2, '0');
 }
+/* ===== תשלומים (installments) ===== */
+// Whole-month difference between two 'YYYY-MM' keys: (y2-y1)*12 + (m2-m1).
+function instMonthDiff(a, b) {
+  const [y1, m1] = String(a || '').split('-').map(Number);
+  const [y2, m2] = String(b || '').split('-').map(Number);
+  return (y2 - y1) * 12 + (m2 - m1);
+}
 function fmtDateIL(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-');
@@ -71,9 +78,9 @@ const CATS = [
 const catById = (id) => CATS.find(c => c.id === id) || CATS[CATS.length - 1];
 
 /* ---------------- store (localStorage, namespaced) ---------------- */
-const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals' };
+const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals', installments: 'ss.installments' };
 const DB = {
-  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [] },
+  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [], installments: [] },
   load() {
     try {
       const raw = localStorage.getItem(K.tx);         if (raw) this.data.tx = JSON.parse(raw);
@@ -82,9 +89,11 @@ const DB = {
       const r4 = localStorage.getItem(K.recurring);   if (r4) this.data.recurring = JSON.parse(r4);
       const r5 = localStorage.getItem(K.settings);   if (r5) this.data.settings = JSON.parse(r5);
       const r6 = localStorage.getItem(K.goals);       if (r6) this.data.goals = JSON.parse(r6);
+      const r7 = localStorage.getItem(K.installments); if (r7) this.data.installments = JSON.parse(r7);
     } catch (e) { /* corrupted storage -> start clean */ }
     if (!Array.isArray(this.data.tx)) this.data.tx = [];
     if (!Array.isArray(this.data.goals)) this.data.goals = [];
+    if (!Array.isArray(this.data.installments)) this.data.installments = [];
   },
   save() {
     try {
@@ -94,6 +103,7 @@ const DB = {
       localStorage.setItem(K.recurring, JSON.stringify(this.data.recurring));
       localStorage.setItem(K.settings, JSON.stringify(this.data.settings));
       localStorage.setItem(K.goals, JSON.stringify(this.data.goals));
+      localStorage.setItem(K.installments, JSON.stringify(this.data.installments));
     } catch (e) { toast('שמירה נכשלה — אחסון מלא או חסום'); }
   }
 };
@@ -343,6 +353,7 @@ function vTransactions(v) {
 let addType = 'expense';
 let editingTx = null;      // transaction id being edited (null = new entry)
 let editingRec = null;     // recurring template id being edited (null = new)
+let editingInst = null;    // installment plan id being edited (null = new)
 let editingBudget = null;  // category id whose budget is being edited (null = new)
 let editReturn = 'dashboard';
 let recType = 'expense';   // recurring form type toggle (module-level so edit mode survives render)
@@ -460,6 +471,10 @@ function vBudgets(v) {
   const er = editingRec ? DB.data.recurring.find(r => r.id === editingRec) : null;
   if (editingRec && !er) editingRec = null;
   const isRecEdit = !!er;
+  /* ===== תשלומים (installments) ===== */
+  const ep = editingInst ? DB.data.installments.find(p => p.id === editingInst) : null;
+  if (editingInst && !ep) editingInst = null;
+  const isInstEdit = !!ep;
   const eb = editingBudget ? catById(editingBudget) : null;
 
   v.innerHTML = `
@@ -513,6 +528,25 @@ function vBudgets(v) {
       <button class="btn btn-ghost" id="r-add">${isRecEdit ? 'שמירת שינויים' : 'הוספת תבנית קבועה'}</button>
       ${isRecEdit ? '<button class="btn btn-ghost" id="r-cancel" style="margin-top:10px">ביטול</button>' : ''}
       <button class="btn" id="r-apply" style="margin-top:10px">החלת החודש (${hebMonthLabel(monthKeyOf(todayISO()))})</button>
+    </div>
+    <div class="card">
+      <h3>תשלומים</h3>
+      <p class="small muted" style="margin-top:-6px">רכישה המחולקת למספר תשלומים חודשיים — כל תשלום נכלל אוטומטית במאזן ובתקציב של החודש שלו.</p>
+      <div id="inst-list">${installmentsListHTML()}</div>
+      <hr class="divider">
+      <div class="field"><label>עסק / תיאור</label><input type="text" id="i-merchant" placeholder="למשל: מקרר חדש" value="${isInstEdit ? esc(ep.merchant) : ''}"></div>
+      <div class="btn-row">
+        <div class="field" style="flex:1;margin:0"><label>סכום לכל תשלום</label><input type="number" id="i-per" inputmode="decimal" min="0" value="${isInstEdit ? ep.perPayment : ''}"></div>
+        <div class="field" style="flex:1;margin:0"><label>מספר תשלומים</label><input type="number" id="i-total" inputmode="numeric" min="1" value="${isInstEdit ? ep.totalPayments : ''}"></div>
+      </div>
+      <div class="btn-row">
+        <div class="field" style="flex:1;margin:0"><label>תשלומים ששולמו</label><input type="number" id="i-paid" inputmode="numeric" min="0" value="${isInstEdit ? ep.paidCount : 0}"></div>
+        <div class="field" style="flex:1;margin:0"><label>קטגוריה</label>
+          <select id="i-cat">${CATS.map(c => `<option value="${c.id}"${isInstEdit && ep.category === c.id ? ' selected' : ''}>${c.he}</option>`).join('')}</select>
+        </div>
+      </div>
+      <button class="btn btn-ghost" id="i-add">${isInstEdit ? 'שמירת שינויים' : 'הוספת תשלומים'}</button>
+      ${isInstEdit ? '<button class="btn btn-ghost" id="i-cancel" style="margin-top:10px">ביטול</button>' : ''}
     </div>
   `;
   $('#b-save').addEventListener('click', () => {
@@ -588,6 +622,41 @@ function vBudgets(v) {
     // Instant (not smooth) scroll: keeps the target stationary for fast follow-up taps.
     setTimeout(() => { const f = $('#r-add'); if (f) f.scrollIntoView({ behavior: 'auto', block: 'center' }); }, 80);
   }));
+  /* ===== תשלומים (installments) ===== */
+  $('#i-add').addEventListener('click', () => {
+    const merchant = $('#i-merchant').value.trim();
+    const per = parseFloat($('#i-per').value);
+    const total = parseInt($('#i-total').value);
+    const paid = parseInt($('#i-paid').value) || 0;
+    if (!merchant || !per || per <= 0) { toast('נא למלא עסק וסכום'); return; }
+    if (!total || total < 1) { toast('נא להזין מספר תשלומים תקין'); return; }
+    if (paid < 0 || paid >= total) { toast('מספר התשלומים ששולמו אינו תקין'); return; }
+    const perPayment = Math.round(per * 100) / 100;
+    const startMonth = shiftMonth(monthKeyOf(todayISO()), -paid);
+    const category = $('#i-cat').value;
+    if (isInstEdit && ep) {
+      Object.assign(ep, { merchant, perPayment, totalPayments: total, paidCount: paid, category, startMonth });
+      editingInst = null;
+      DB.save(); render(); toast('התשלומים עודכנו ✓');
+      return;
+    }
+    DB.data.installments.push({ id: uid(), merchant, perPayment, paidCount: paid, totalPayments: total, category, startMonth, active: true });
+    DB.save(); render(); toast('התשלומים נוספו');
+  });
+  const iCancel = $('#i-cancel');
+  if (iCancel) iCancel.addEventListener('click', () => { editingInst = null; render(); });
+  $$('#inst-list [data-idel]').forEach(b => b.addEventListener('click', () => {
+    if (!confirm('למחוק את התשלומים?')) return;
+    DB.data.installments = DB.data.installments.filter(p => p.id !== b.dataset.idel);
+    DB.save(); render(); toast('התשלומים נמחקו');
+  }));
+  $$('#inst-list [data-iedit]').forEach(b => b.addEventListener('click', () => {
+    const p = DB.data.installments.find(x => x.id === b.dataset.iedit);
+    if (!p) return;
+    editingInst = p.id; render();
+    // Instant (not smooth) scroll: keeps the target stationary for fast follow-up taps.
+    setTimeout(() => { const f = $('#i-add'); if (f) f.scrollIntoView({ behavior: 'auto', block: 'center' }); }, 80);
+  }));
 }
 function recurringListHTML() {
   if (!DB.data.recurring.length) return '<div class="muted">אין תבניות עדיין.</div>';
@@ -603,6 +672,31 @@ function recurringListHTML() {
       <div class="tx-amount ${type}">${fmtSigned(isInc ? r.amount : -r.amount)}</div>
       <button class="tx-edit" data-redit="${r.id}" aria-label="עריכת תבנית">✎</button>
       <button class="tx-del" data-rdel="${r.id}" aria-label="מחיקת תבנית">×</button>
+    </div>`;
+  }).join('');
+}
+/* ===== תשלומים (installments) ===== */
+function installmentsListHTML() {
+  if (!DB.data.installments.length) return '<div class="muted">אין תשלומים עדיין.</div>';
+  const mk = monthKeyOf(todayISO());
+  return DB.data.installments.map(p => {
+    const c = catById(p.category);
+    const total = Number(p.totalPayments) || 0;
+    const per = Number(p.perPayment) || 0;
+    const paid = total > 0 ? Math.min(Math.max(instMonthDiff(p.startMonth, mk), 0), total) : 0;
+    const remaining = total - paid;
+    const done = paid >= total;
+    const sub = done
+      ? '<span class="muted">הושלם ✓</span>'
+      : `שולמו ${paid} מתוך ${total} · נותרו ${fmtMoney(Math.round(remaining * per * 100) / 100)}`;
+    return `
+    <div class="tx-row">
+      <span class="tx-dot" style="background:${c.color}"></span>
+      <div class="tx-main"><div class="tx-merchant">${esc(p.merchant)}</div>
+      <div class="tx-sub">${sub}</div></div>
+      <div class="tx-amount expense">${fmtSigned(-per)}</div>
+      <button class="tx-edit" data-iedit="${p.id}" aria-label="עריכת תשלומים">✎</button>
+      <button class="tx-del" data-idel="${p.id}" aria-label="מחיקת תשלומים">×</button>
     </div>`;
   }).join('');
 }
@@ -652,6 +746,28 @@ function plannedForMonth(mk) {
       normMerchant(t.merchant) === normMerchant(r.merchant));
     if (manual) continue;
     out.push(r);
+  }
+  /* ===== תשלומים (installments) ===== */
+  // Active installment plans: project payment #k into month mk only when
+  // 0 <= k < totalPayments, where k = months since startMonth. Deduped like
+  // recurring: skip if applied (source 'installment:<id>') or recorded
+  // manually (same merchant + amount + expense) in month mk.
+  for (const p of DB.data.installments) {
+    if (!p.active) continue;
+    const total = Number(p.totalPayments), per = Number(p.perPayment);
+    if (!(total > 0) || !(per > 0) || !p.startMonth) continue;
+    const k = instMonthDiff(p.startMonth, mk);
+    if (k < 0 || k >= total) continue;
+    const applied = DB.data.tx.some(t => t.source === 'installment:' + p.id && monthKeyOf(t.date) === mk);
+    if (applied) continue;
+    const manual = DB.data.tx.some(t =>
+      monthKeyOf(t.date) === mk &&
+      !(t.source || '').startsWith('installment:') &&
+      t.type === 'expense' &&
+      Math.abs(Number(t.amount) - per) < 0.005 &&
+      normMerchant(t.merchant) === normMerchant(p.merchant));
+    if (manual) continue;
+    out.push({ type: 'expense', amount: per, merchant: p.merchant, category: p.category || 'other' });
   }
   return out;
 }
@@ -759,6 +875,87 @@ function vGoals(v) {
     });
   });
 }
+/* ===== smart summary (F3) ===== */
+function smartSummaryHTML() {
+  const mk = monthKeyOf(todayISO());
+  const prev = shiftMonth(mk, -1);
+  // per-category actual expense sums (from txInMonth only — no planned items)
+  const catSums = (m) => {
+    const out = {};
+    for (const t of txInMonth(m)) {
+      if (t.type !== 'expense') continue;
+      const c = t.category || 'other';
+      out[c] = (out[c] || 0) + (Number(t.amount) || 0);
+    }
+    return out;
+  };
+  const cur = catSums(mk), prv = catSums(prev);
+  const lines = []; // [key, html]
+
+  // (b) budget pace warning — worst projected overshoot
+  const today = new Date();
+  const dim = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const elapsed = Math.max(1, Math.min(today.getDate(), dim));
+  let worst = null;
+  for (const c of CATS) {
+    const budget = Number(DB.data.budgets[c.id]) || 0;
+    if (budget <= 0) continue;
+    const proj = (cur[c.id] || 0) / elapsed * dim;
+    if (proj > budget && (!worst || (proj - budget) > (worst.proj - worst.budget))) {
+      worst = { catId: c.id, proj, budget };
+    }
+  }
+  if (worst) {
+    lines.push(['b', `קצב ההוצאה על ${esc(catById(worst.catId).he)} צפוי לחרוג מהתקציב ב־${fmtMoney(worst.proj - worst.budget)} עד סוף החודש`]);
+  }
+
+  // (a) top category riser — largest % increase vs last month
+  let bestPct = null, bestNew = null;
+  for (const id in cur) {
+    if (cur[id] <= 0) continue;
+    const p = prv[id] || 0;
+    if (p > 0) {
+      const pct = Math.round((cur[id] - p) / p * 100);
+      if (pct > 0 && (!bestPct || pct > bestPct.pct)) bestPct = { catId: id, pct, cur: cur[id] };
+    } else if (!bestNew || cur[id] > bestNew.cur) {
+      bestNew = { catId: id, cur: cur[id] };
+    }
+  }
+  const riser = bestPct || bestNew;
+  if (riser) {
+    const he = esc(catById(riser.catId).he);
+    lines.push(['a', riser.pct != null
+      ? `ההוצאה על ${he} עלתה ב־${riser.pct}% לעומת החודש שעבר (${fmtMoney(riser.cur)})`
+      : `הוצאה חדשה החודש על ${he}: ${fmtMoney(riser.cur)}`]);
+  }
+
+  // (c) largest single expense this month
+  let big = null;
+  for (const t of txInMonth(mk)) {
+    if (t.type !== 'expense') continue;
+    const amt = Number(t.amount) || 0;
+    if (!big || amt > big.amt) big = { merchant: t.merchant || 'ללא שם', amt };
+  }
+  if (big) lines.push(['c', `ההוצאה הגדולה החודש: ${esc(big.merchant)} — ${fmtMoney(big.amt)}`]);
+
+  // (e) recurring total planned this month (expense templates)
+  const planSum = plannedForMonth(mk).reduce((a, r) =>
+    a + ((r.type || 'expense') === 'expense' ? Number(r.amount) || 0 : 0), 0);
+  if (planSum > 0) lines.push(['e', `תשלומים קבועים מתוכננים החודש: ${fmtMoney(planSum)}`]);
+
+  // (d) savings rate
+  const tot = monthTotals(mk);
+  if (tot.inc > 0) {
+    const rate = Math.round((tot.inc - tot.exp) / tot.inc * 100);
+    lines.push(['d', `שיעור החיסכון החודש: ${rate}% מההכנסות`]);
+  }
+
+  if (!lines.length) return '';
+  const order = { b: 0, a: 1, c: 2, e: 3, d: 4 };
+  lines.sort((x, y) => order[x[0]] - order[y[0]]);
+  const shown = lines.slice(0, 4);
+  return `<div class="card"><h3>סיכום חכם</h3>${shown.map(l => `<div class="smart-line">${l[1]}</div>`).join('')}</div>`;
+}
 
 /* ---------------- insights ---------------- */
 function vInsights(v) {
@@ -791,9 +988,21 @@ function vInsights(v) {
   const subs = detectSubscriptions();
   const subsMonthly = subs.reduce((a, s) => a + s.avg, 0);
 
+  /* ===== visuals (F2) ===== */
+  // category donut data for the current month (expense actuals, sum > 0 only)
+  const vizCatMap = {};
+  for (const t of txInMonth(mk)) {
+    if (t.type !== 'expense') continue;
+    const c = catById(t.category);
+    vizCatMap[c.id] = vizCatMap[c.id] || { cat: c, sum: 0 };
+    vizCatMap[c.id].sum += Number(t.amount) || 0;
+  }
+  const vizByCat = Object.values(vizCatMap).filter(b => b.sum > 0).sort((a, b) => b.sum - a.sum);
+
   v.innerHTML = `
     <h2 class="section-title">תובנות</h2>
     ${DB.data.tx.length === 0 ? '<div class="empty"><div class="big">עוד אין נתונים</div><div>הוסיפו כמה עסקאות — התובנות יופיעו כאן מעצמן.</div></div>' : `
+    ${smartSummaryHTML()}
     <div class="card">
       <h3>החודש מול חודש שעבר</h3>
       <div class="kv"><span class="k">${hebMonthLabel(prev)}</span><span>${fmtMoney(prv.exp)}</span></div>
@@ -829,8 +1038,89 @@ function vInsights(v) {
         <div class="kv"><span class="k">${esc(s.merchant)} <span class="muted small">· ${s.months} חודשים</span></span>
         <span>${fmtMoney(s.avg)}<span class="muted small"> / ${fmtMoney(s.annual)} לשנה</span></span></div>`).join('')
         : '<div class="muted">לא זוהו תשלומים חוזרים. ככל שיירשמו יותר חודשים — הזיהוי ישתפר.</div>'}
+    </div>
+    <div class="card">
+      <h3>הוצאות לפי קטגוריה</h3>
+      ${vizDonutHTML(vizByCat)}
+    </div>
+    <div class="card">
+      <h3>חצי שנה אחרונה</h3>
+      ${vizBars6HTML()}
     </div>`}
   `;
+  /* ===== visuals (F2) ===== */
+  vizSelectedCat = null;
+  $$('.viz-seg', v).forEach(seg => seg.addEventListener('click', () => vizToggleSeg(seg, v)));
+}
+
+/* ===== visuals (F2) ===== */
+let vizSelectedCat = null;
+
+// Donut chart of current-month expense spending per category.
+// byCat: [{cat, sum}] (sum > 0), colored with each category's CATS color.
+function vizDonutHTML(byCat) {
+  const total = byCat.reduce((a, b) => a + b.sum, 0);
+  if (!byCat.length || total <= 0) return '<div class="muted">אין הוצאות החודש.</div>';
+  const R = 54, CIRC = 2 * Math.PI * R;
+  let off = 0;
+  const segs = byCat.map(b => {
+    const len = b.sum / total * CIRC;
+    const s = `<circle class="viz-seg" data-cat="${esc(b.cat.id)}" data-name="${esc(b.cat.he)}" data-sum="${b.sum}" `
+      + `cx="70" cy="70" r="${R}" fill="none" stroke="${b.cat.color}" stroke-width="26" `
+      + `stroke-dasharray="${len.toFixed(2)} ${CIRC.toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" `
+      + `transform="rotate(-90 70 70)"/>`;
+    off += len;
+    return s;
+  }).join('');
+  return `<div class="viz-donut-wrap">
+    <svg class="viz-donut" viewBox="0 0 140 140" role="img" aria-label="הוצאות לפי קטגוריה">
+      ${segs}
+      <text class="viz-center" x="70" y="66">${esc(fmtMoney(total))}</text>
+      <text class="viz-caption" x="70" y="86">סה״כ</text>
+    </svg>
+    <div id="viz-cat-detail" class="viz-detail" aria-live="polite"></div>
+  </div>`;
+}
+
+// Toggle the detail line under the donut when a segment is tapped.
+function vizToggleSeg(seg, v) {
+  const detail = $('#viz-cat-detail', v);
+  if (!detail) return;
+  const cat = seg.getAttribute('data-cat');
+  const wasActive = vizSelectedCat === cat;
+  vizSelectedCat = wasActive ? null : cat;
+  $$('.viz-seg', v).forEach(s => s.classList.toggle('viz-active', !wasActive && s === seg));
+  detail.textContent = wasActive ? '' : seg.getAttribute('data-name') + ': ' + fmtMoney(Number(seg.getAttribute('data-sum')));
+}
+
+// Grouped vertical bars for the last 6 months: expenses vs income.
+function vizBars6HTML() {
+  const months = [];
+  for (let d = -5; d <= 0; d++) months.push(shiftMonth(monthKeyOf(todayISO()), d));
+  const vals = months.map(m => monthTotals(m));
+  const max = Math.max(1, ...vals.map(x => Math.max(x.exp, x.inc)));
+  const H = 88;
+  const groups = months.map((m, i) => {
+    const b = (v) => Math.max(3, Math.round(v / max * H));
+    return `<div class="viz-group">
+      <div class="viz-bars">
+        <div class="viz-bar viz-exp" style="height:${b(vals[i].exp)}px" title="הוצאות: ${esc(fmtMoney(vals[i].exp))}"></div>
+        <div class="viz-bar viz-inc" style="height:${b(vals[i].inc)}px" title="הכנסות: ${esc(fmtMoney(vals[i].inc))}"></div>
+      </div>
+      <div class="viz-mlabel">${esc(vizMonthShort(m))}</div>
+    </div>`;
+  }).join('');
+  return `<div class="viz-legend">
+      <span class="viz-dot" style="background:var(--red)"></span>הוצאות
+      <span class="viz-dot" style="background:var(--green)"></span>הכנסות
+    </div>
+    <div class="viz-bars6">${groups}</div>`;
+}
+
+// Compact month label (e.g. "10/26") that fits 6 groups on a 360px phone screen.
+function vizMonthShort(mk) {
+  const [y, m] = mk.split('-').map(Number);
+  return m + '/' + String(y).slice(2);
 }
 
 /* ---------------- CSV import ---------------- */
@@ -1020,7 +1310,8 @@ function onBackupFile(e) {
       DB.data = {
         tx: d.tx || [], rules: d.rules || {}, budgets: d.budgets || {},
         recurring: d.recurring || [], settings: d.settings || {},
-        goals: Array.isArray(d.goals) ? d.goals : []
+        goals: Array.isArray(d.goals) ? d.goals : [],
+        installments: d.installments || []
       };
       DB.save(); render(); toast('הגיבוי שוחזר');
     } catch (err) { toast('קובץ הגיבוי לא תקין'); }
@@ -1286,7 +1577,7 @@ function vSettings(v) {
   $('#s-wipe').addEventListener('click', () => {
     if (!confirm('למחוק את כל הנתונים? אין דרך חזרה.')) return;
     Object.values(K).forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
-    DB.data = { tx: [], rules: {}, budgets: {}, recurring: [], settings: {} };
+    DB.data = { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, installments: [] };
     render(); toast('הכל נמחק');
   });
 }
