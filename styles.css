@@ -298,13 +298,47 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ===== smart summary (F3) ===== */
+.smart-line {
+  padding: 9px 12px;
+  margin: 8px 0;
+  border-right: 3px solid var(--gold);
+  border-radius: 8px;
+  background: var(--gold-dim);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
 .check-row { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
 .check-row input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--gold); }
+
+/* ===== תשלומים (installments) ===== */
+/* Plan rows reuse .tx-row/.tx-edit/.tx-del; keep the progress line readable on narrow screens */
+#inst-list .tx-sub { line-height: 1.5; }
 
 .weekday-chart { display: flex; align-items: flex-end; gap: 6px; height: 110px; margin-top: 10px; direction: ltr; }
 .weekday-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
 .weekday-bar { width: 70%; background: linear-gradient(180deg, var(--gold-soft), var(--gold)); border-radius: 5px 5px 0 0; min-height: 3px; }
 .weekday-lbl { font-size: 0.68rem; color: var(--muted); margin-top: 5px; }
+
+/* ===== visuals (F2) ===== */
+.viz-donut-wrap { display: flex; flex-direction: column; align-items: center; }
+.viz-donut { width: 190px; height: 190px; max-width: 60vw; }
+.viz-seg { cursor: pointer; transition: opacity 0.15s, filter 0.15s; }
+.viz-seg:hover { opacity: 0.85; }
+.viz-seg.viz-active { filter: brightness(1.3); }
+.viz-center { text-anchor: middle; fill: var(--text); font-family: var(--sans); font-weight: 700; font-size: 16px; }
+.viz-caption { text-anchor: middle; fill: var(--muted); font-family: var(--sans); font-size: 12px; }
+.viz-detail { min-height: 28px; margin-top: 8px; color: var(--text); font-size: 0.95rem; text-align: center; }
+.viz-legend { display: flex; align-items: center; gap: 7px; font-size: 0.82rem; color: var(--muted); }
+.viz-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.viz-bars6 { display: flex; align-items: stretch; justify-content: space-between; gap: 4px; margin-top: 10px; direction: ltr; }
+.viz-group { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
+.viz-bars { display: flex; align-items: flex-end; gap: 5px; }
+.viz-bar { width: 16px; border-radius: 4px 4px 2px 2px; min-height: 3px; }
+.viz-bar.viz-exp { background: var(--red); }
+.viz-bar.viz-inc { background: var(--green); }
+.viz-mlabel { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
 
 @media (min-width: 760px) {
   .view { padding: 26px 20px 40px; }
