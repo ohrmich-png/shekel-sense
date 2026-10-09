@@ -985,7 +985,21 @@ function vInsights(v) {
   }
   const maxWd = Math.max(1, ...wd);
 
-  const subs = detectSubscriptions();
+  // Subscriptions + recurring expenses: detected subs from tx history PLUS
+  // active recurring expense templates (detection alone misses those).
+  // Dedup: a detected sub whose merchant matches an active template is the
+  // same commitment (applied txs carry source 'recurring:<id>') — count once.
+  const detectedSubs = detectSubscriptions();
+  const tplExpense = DB.data.recurring.filter(r =>
+    r.active && (r.type || 'expense') === 'expense' && (Number(r.amount) || 0) > 0);
+  const tplMerchants = new Set(tplExpense.map(r => normMerchant(r.merchant)));
+  const tplRows = tplExpense.map(r => ({
+    merchant: r.merchant, category: r.category,
+    months: 0, avg: Number(r.amount) || 0, annual: (Number(r.amount) || 0) * 12,
+    count: 0, fromTemplate: true
+  }));
+  const freshDetected = detectedSubs.filter(s => !tplMerchants.has(normMerchant(s.merchant)));
+  const subs = [...tplRows, ...freshDetected];
   const subsMonthly = subs.reduce((a, s) => a + s.avg, 0);
 
   /* ===== visuals (F2) ===== */
@@ -1035,7 +1049,7 @@ function vInsights(v) {
     <div class="card">
       <h3>מנויים והוצאות חוזרות <span class="pill">${fmtMoney(subsMonthly)} לחודש</span></h3>
       ${subs.length ? subs.map(s => `
-        <div class="kv"><span class="k">${esc(s.merchant)} <span class="muted small">· ${s.months} חודשים</span></span>
+        <div class="kv"><span class="k">${esc(s.merchant)} <span class="muted small">· ${s.fromTemplate ? 'תבנית חודשית' : `${s.months} חודשים`}</span></span>
         <span>${fmtMoney(s.avg)}<span class="muted small"> / ${fmtMoney(s.annual)} לשנה</span></span></div>`).join('')
         : '<div class="muted">לא זוהו תשלומים חוזרים. ככל שיירשמו יותר חודשים — הזיהוי ישתפר.</div>'}
     </div>
