@@ -78,9 +78,9 @@ const CATS = [
 const catById = (id) => CATS.find(c => c.id === id) || CATS[CATS.length - 1];
 
 /* ---------------- store (localStorage, namespaced) ---------------- */
-const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals', installments: 'ss.installments' };
+const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals', installments: 'ss.installments', inbox: 'ss.inbox' };
 const DB = {
-  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [], installments: [] },
+  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [], installments: [], inbox: [] },
   load() {
     try {
       const raw = localStorage.getItem(K.tx);         if (raw) this.data.tx = JSON.parse(raw);
@@ -90,10 +90,12 @@ const DB = {
       const r5 = localStorage.getItem(K.settings);   if (r5) this.data.settings = JSON.parse(r5);
       const r6 = localStorage.getItem(K.goals);       if (r6) this.data.goals = JSON.parse(r6);
       const r7 = localStorage.getItem(K.installments); if (r7) this.data.installments = JSON.parse(r7);
+      const r8 = localStorage.getItem(K.inbox);         if (r8) this.data.inbox = JSON.parse(r8);
     } catch (e) { /* corrupted storage -> start clean */ }
     if (!Array.isArray(this.data.tx)) this.data.tx = [];
     if (!Array.isArray(this.data.goals)) this.data.goals = [];
     if (!Array.isArray(this.data.installments)) this.data.installments = [];
+    if (!Array.isArray(this.data.inbox)) this.data.inbox = [];
   },
   save() {
     try {
@@ -104,6 +106,7 @@ const DB = {
       localStorage.setItem(K.settings, JSON.stringify(this.data.settings));
       localStorage.setItem(K.goals, JSON.stringify(this.data.goals));
       localStorage.setItem(K.installments, JSON.stringify(this.data.installments));
+      localStorage.setItem(K.inbox, JSON.stringify(this.data.inbox));
     } catch (e) { toast('שמירה נכשלה — אחסון מלא או חסום'); }
   }
 };
@@ -361,6 +364,8 @@ function vAdd(v) {
   const et = editingTx ? DB.data.tx.find(t => t.id === editingTx) : null;
   if (editingTx && !et) editingTx = null;
   const isEdit = !!et;
+  const pre = (!isEdit && notifPrefill) ? notifPrefill : null;
+  notifPrefill = null; // consume once
   v.innerHTML = `
     <h2 class="section-title">${isEdit ? 'עריכת עסקה' : 'הוספת ' + (addType === 'expense' ? 'הוצאה' : 'הכנסה')}</h2>
     <div class="card">
@@ -370,11 +375,11 @@ function vAdd(v) {
       </div>
       <div class="field">
         <label>סכום (₪)</label>
-        <input type="number" id="f-amount" class="amount-input" inputmode="decimal" min="0" step="0.01" placeholder="0" value="${isEdit ? et.amount : ''}">
+        <input type="number" id="f-amount" class="amount-input" inputmode="decimal" min="0" step="0.01" placeholder="0" value="${isEdit ? et.amount : (pre && pre.amount != null ? pre.amount : '')}">
       </div>
       <div class="field">
         <label>עסק / תיאור</label>
-        <input type="text" id="f-merchant" list="merchant-list" placeholder="${addType === 'income' ? 'למשל: מעסיק' : 'למשל: שופרסל'}" autocomplete="off" value="${isEdit ? esc(et.merchant) : ''}">
+        <input type="text" id="f-merchant" list="merchant-list" placeholder="${addType === 'income' ? 'למשל: מעסיק' : 'למשל: שופרסל'}" autocomplete="off" value="${isEdit ? esc(et.merchant) : (pre ? esc(pre.merchant) : '')}">
         <datalist id="merchant-list">${[...new Set(DB.data.tx.map(t => t.merchant).filter(Boolean))].slice(0, 60).map(m => `<option value="${esc(m)}">`).join('')}</datalist>
       </div>
       ${addType === 'income' ? '' : `
@@ -390,13 +395,13 @@ function vAdd(v) {
       </div>
       <div class="field">
         <label>הערה (אופציונלי)</label>
-        <input type="text" id="f-notes" placeholder="" value="${isEdit ? esc(et.notes) : ''}">
+        <input type="text" id="f-notes" placeholder="" value="${isEdit ? esc(et.notes) : (pre ? esc(pre.notes) : '')}">
       </div>
       <button class="btn" id="f-save">${isEdit ? 'שמירת שינויים' : 'שמירה'}</button>
       ${isEdit ? '<button class="btn btn-ghost" id="f-cancel" style="margin-top:10px">ביטול</button>' : ''}
     </div>
   `;
-  let selCat = (isEdit && et.type === 'expense') ? (et.category || 'other') : 'other';
+  let selCat = (isEdit && et.type === 'expense') ? (et.category || 'other') : (pre && pre.merchant ? guessCategory(pre.merchant) : 'other');
   const chips = $$('#cat-chips .chip');
   const pick = (id) => { selCat = id; chips.forEach(ch => ch.classList.toggle('selected', ch.dataset.cat === id)); };
   chips.forEach(ch => ch.classList.toggle('selected', ch.dataset.cat === selCat));
@@ -1325,7 +1330,8 @@ function onBackupFile(e) {
         tx: d.tx || [], rules: d.rules || {}, budgets: d.budgets || {},
         recurring: d.recurring || [], settings: d.settings || {},
         goals: Array.isArray(d.goals) ? d.goals : [],
-        installments: d.installments || []
+        installments: d.installments || [],
+        inbox: Array.isArray(d.inbox) ? d.inbox : []
       };
       DB.save(); render(); toast('הגיבוי שוחזר');
     } catch (err) { toast('קובץ הגיבוי לא תקין'); }
@@ -1569,12 +1575,156 @@ function renderGmailCard() {
   });
 }
 
+
+/* ---------------- notification capture (native Android companion) ---------------- */
+// Only active inside the native Android app, where Capacitor injects the bridge
+// and the NotificationCapture plugin is registered. In a regular browser this
+// whole section is inert (notifCap() returns null).
+let notifPrefill = null; // {amount, merchant, notes} — consumed once by vAdd
+function notifCap() {
+  try {
+    const C = window.Capacitor;
+    if (C && C.isPluginAvailable && C.isPluginAvailable('NotificationCapture'))
+      return C.Plugins.NotificationCapture;
+  } catch (e) { /* no bridge */ }
+  return null;
+}
+function notifHash(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+function dayDiff(a, b) {
+  const pa = String(a || '').split('-').map(Number), pb = String(b || '').split('-').map(Number);
+  if (pa.length < 3 || pb.length < 3 || pa.some(isNaN) || pb.some(isNaN)) return 999;
+  const da = new Date(pa[0], pa[1] - 1, pa[2]), db = new Date(pb[0], pb[1] - 1, pb[2]);
+  return Math.round((db - da) / 86400000);
+}
+function notifInit() {
+  const NC = notifCap();
+  if (!NC || notifInit.done) return;
+  notifInit.done = true;
+  NC.addListener('transactionDetected', onNotifTx);
+  NC.addListener('notificationUnparsed', onNotifUnparsed);
+  // re-check listener status when returning from system settings
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && route === 'settings' && notifCap()) render();
+  });
+}
+function onNotifTx(ev) {
+  const amount = Number(ev.amount);
+  const merchant = String(ev.merchant || '').trim();
+  if (!amount || amount <= 0 || !merchant) { onNotifUnparsed(ev); return; }
+  const today = todayISO();
+  const hash = notifHash([ev.package, ev.title, ev.text, today].join('|'));
+  const nm = normMerchant(merchant);
+  // dedup: same merchant + amount within a day, regardless of source
+  // (also prevents double-counting with Gmail imports); plus source hash
+  const dup = DB.data.tx.some(t =>
+    normMerchant(t.merchant) === nm &&
+    Math.abs(Number(t.amount) - amount) < 0.005 &&
+    Math.abs(dayDiff(t.date, today)) <= 1);
+  if (dup || DB.data.tx.some(t => t.source === 'notification:' + hash)) return;
+  if (DB.data.settings.notifAuto === false) {
+    inboxPush({ amount, merchant, title: ev.title, text: ev.text, pkg: ev.package, reason: 'auto-off' });
+    return;
+  }
+  const category = guessCategory(merchant);
+  DB.data.tx.push({
+    id: uid(), type: 'expense', amount: Math.round(amount * 100) / 100,
+    merchant, category, date: today,
+    notes: ev.cardLast4 ? 'נקלט מהתראה · *' + ev.cardLast4 : 'נקלט מהתראה',
+    source: 'notification:' + hash, createdAt: Date.now()
+  });
+  learnRule(merchant, category);
+  toast(`נוספה הוצאה: ${merchant} · ${fmtMoney(amount)}`);
+  render();
+}
+function onNotifUnparsed(ev) {
+  inboxPush({
+    amount: ev.amount != null && !isNaN(Number(ev.amount)) ? Number(ev.amount) : null,
+    merchant: ev.merchant || '', title: ev.title || '', text: ev.text || '',
+    pkg: ev.package || '', reason: ev.reason || 'unparsed'
+  });
+  toast('נקלטה התראה — ממתינה לסקירה בהגדרות');
+}
+function inboxPush(item) {
+  DB.data.inbox.unshift(Object.assign({ id: uid(), detectedAt: Date.now() }, item));
+  if (DB.data.inbox.length > 50) DB.data.inbox.length = 50;
+  DB.save();
+  if (route === 'settings') render();
+}
+function notifCardHTML() {
+  return `<h3>קליטת התראות</h3>
+    <p class="small muted">קליטה אוטומטית של הוצאות מהתראות בנק/אשראי — באפליקציית האנדרואיד בלבד. הקליטה מקומית בלבד; שום דבר לא עוזב את המכשיר.</p>
+    <div class="kv"><span class="k">סטטוס גישה</span><span id="nc-status">בודק…</span></div>
+    <label class="small" style="display:flex;align-items:center;gap:8px;margin-top:8px">
+      <input type="checkbox" id="nc-auto" style="width:20px;height:20px" ${DB.data.settings.notifAuto !== false ? 'checked' : ''}>
+      הוספה אוטומטית של הוצאות מזוהות
+    </label>
+    <button class="btn" id="nc-grant" style="margin-top:10px">מתן גישה להתראות</button>
+    <div id="nc-inbox"></div>`;
+}
+function wireNotifCard() {
+  const NC = notifCap();
+  if (!NC) return;
+  const st = $('#nc-status');
+  const refresh = () => {
+    NC.isListenerEnabled()
+      .then(r => { if (st) { st.textContent = r && r.enabled ? 'פעיל ✓' : 'לא פעיל'; } })
+      .catch(() => { if (st) st.textContent = 'לא זמין'; });
+  };
+  refresh();
+  const grant = $('#nc-grant');
+  if (grant) grant.addEventListener('click', () => {
+    try { NC.openListenerSettings().then(refresh).catch(() => {}); }
+    catch (e) { toast('לא ניתן לפתוח את ההגדרות'); }
+  });
+  const auto = $('#nc-auto');
+  if (auto) auto.addEventListener('change', () => {
+    DB.data.settings.notifAuto = auto.checked;
+    DB.save();
+    toast(auto.checked ? 'הוספה אוטומטית פעילה' : 'הוספה אוטומטית כבויה — התראות ימתינו בסקירה');
+  });
+  renderNotifInbox();
+}
+function renderNotifInbox() {
+  const host = $('#nc-inbox');
+  if (!host) return;
+  const items = DB.data.inbox;
+  if (!items.length) { host.innerHTML = '<p class="small muted" style="margin-top:10px">אין התראות ממתינות לסקירה.</p>'; return; }
+  host.innerHTML = `<h4 style="margin:12px 0 6px">תיבת קליטה (${items.length})</h4>` + items.map(it => `
+    <div class="card" style="margin:8px 0;padding:10px">
+      <div><b>${it.amount != null ? fmtMoney(it.amount) : '—'}</b> · ${esc(it.merchant) || '<span class="muted">עסק לא זוהה</span>'}</div>
+      <div class="small muted">${esc(it.title)}${it.text ? ' · ' + esc(String(it.text).slice(0, 90)) : ''}</div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button class="btn" data-nc-add="${it.id}">הוסף כהוצאה</button>
+        <button class="btn btn-ghost" data-nc-del="${it.id}">התעלם</button>
+      </div>
+    </div>`).join('');
+  host.querySelectorAll('[data-nc-add]').forEach(b => b.addEventListener('click', () => {
+    const it = DB.data.inbox.find(x => x.id === b.dataset.ncAdd);
+    if (!it) return;
+    notifPrefill = { amount: it.amount, merchant: it.merchant || '', notes: 'נקלט מהתראה' };
+    DB.data.inbox = DB.data.inbox.filter(x => x.id !== it.id);
+    DB.save();
+    addType = 'expense'; editingTx = null;
+    go('add');
+  }));
+  host.querySelectorAll('[data-nc-del]').forEach(b => b.addEventListener('click', () => {
+    DB.data.inbox = DB.data.inbox.filter(x => x.id !== b.dataset.ncDel);
+    DB.save();
+    renderNotifInbox();
+  }));
+}
+
 /* ---------------- settings ---------------- */
 function vSettings(v) {
   const s = DB.data.settings;
   v.innerHTML = `
     <h2 class="section-title">הגדרות</h2>
     <div class="card" id="gmail-card"></div>
+    <div class="card" id="notif-card" style="display:none"></div>
     <div class="card">
       <h3>ניהול נתונים</h3>
       <p class="small muted">כל הנתונים נשמרים מקומית בדפדפן הזה בלבד. שום דבר לא עוזב את המכשיר.</p>
@@ -1588,10 +1738,18 @@ function vSettings(v) {
     </div>
   `;
   renderGmailCard();
+  if (notifCap()) {
+    const ncHost = $('#notif-card');
+    if (ncHost) {
+      ncHost.style.display = '';
+      ncHost.innerHTML = notifCardHTML();
+      wireNotifCard();
+    }
+  }
   $('#s-wipe').addEventListener('click', () => {
     if (!confirm('למחוק את כל הנתונים? אין דרך חזרה.')) return;
     Object.values(K).forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
-    DB.data = { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, installments: [] };
+    DB.data = { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [], installments: [], inbox: [] };
     render(); toast('הכל נמחק');
   });
 }
@@ -1609,5 +1767,6 @@ function init() {
   const h0 = location.hash.replace('#/', '');
   route = ROUTES.includes(h0) ? h0 : 'dashboard';
   render();
+  notifInit();
 }
 document.addEventListener('DOMContentLoaded', init);
