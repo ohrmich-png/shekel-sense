@@ -78,9 +78,9 @@ const CATS = [
 const catById = (id) => CATS.find(c => c.id === id) || CATS[CATS.length - 1];
 
 /* ---------------- store (localStorage, namespaced) ---------------- */
-const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals', installments: 'ss.installments', inbox: 'ss.inbox' };
+const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals', installments: 'ss.installments', inbox: 'ss.inbox', accounts: 'ss.accounts' };
 const DB = {
-  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [], installments: [], inbox: [] },
+  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [], installments: [], inbox: [], accounts: [] },
   load() {
     try {
       const raw = localStorage.getItem(K.tx);         if (raw) this.data.tx = JSON.parse(raw);
@@ -91,11 +91,13 @@ const DB = {
       const r6 = localStorage.getItem(K.goals);       if (r6) this.data.goals = JSON.parse(r6);
       const r7 = localStorage.getItem(K.installments); if (r7) this.data.installments = JSON.parse(r7);
       const r8 = localStorage.getItem(K.inbox);         if (r8) this.data.inbox = JSON.parse(r8);
+      const r9 = localStorage.getItem(K.accounts);      if (r9) this.data.accounts = JSON.parse(r9);
     } catch (e) { /* corrupted storage -> start clean */ }
     if (!Array.isArray(this.data.tx)) this.data.tx = [];
     if (!Array.isArray(this.data.goals)) this.data.goals = [];
     if (!Array.isArray(this.data.installments)) this.data.installments = [];
     if (!Array.isArray(this.data.inbox)) this.data.inbox = [];
+    if (!Array.isArray(this.data.accounts)) this.data.accounts = [];
   },
   save() {
     try {
@@ -107,6 +109,7 @@ const DB = {
       localStorage.setItem(K.goals, JSON.stringify(this.data.goals));
       localStorage.setItem(K.installments, JSON.stringify(this.data.installments));
       localStorage.setItem(K.inbox, JSON.stringify(this.data.inbox));
+      localStorage.setItem(K.accounts, JSON.stringify(this.data.accounts));
     } catch (e) { toast('שמירה נכשלה — אחסון מלא או חסום'); }
   }
 };
@@ -181,7 +184,7 @@ function detectSubscriptions() {
 }
 
 /* ---------------- router ---------------- */
-const ROUTES = ['dashboard', 'transactions', 'add', 'budgets', 'insights', 'import', 'settings', 'goals'];
+const ROUTES = ['dashboard', 'transactions', 'add', 'budgets', 'insights', 'import', 'settings', 'goals', 'accounts'];
 let route = 'dashboard';
 let dashMonth = monthKeyOf(todayISO());
 let txSearch = '';
@@ -203,6 +206,7 @@ function render() {
   else if (route === 'import') vImport(v);
   else if (route === 'settings') vSettings(v);
   else if (route === 'goals') vGoals(v);
+  else if (route === 'accounts') vAccounts(v);
   bindCommon(v);
 }
 function bindCommon(v) {
@@ -270,6 +274,20 @@ function vDashboard(v) {
           '<div class="small muted" style="margin:0 0 8px">יש לכם חלום? קרן רכב, טיול, חתונה — צרו יעד והפס יתמלא מעצמו.</div>'}
         <button class="btn btn-ghost" data-go="goals">${goals.length ? 'כל היעדים' : 'יצירת יעד ראשון'}</button>
       </div>`;
+  // bank accounts snapshot (manual balances — stock, vs. the monthly flow above)
+  const accounts = (DB.data.accounts || []).slice().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  const acctTotal = accounts.reduce((a, c) => a + (Number(c.balance) || 0), 0);
+  const goalCommitted = goals.reduce((a, g) => a + (Number(g.saved) || 0), 0);
+  const accountsCard = `
+      <div class="card">
+        <h3>יתרות בנק <span class="pill">${accounts.length}</span></h3>
+        ${accounts.length ? `
+          <div class="budget-row"><div class="budget-top"><span>סה״כ בבנק</span><span class="muted">${fmtMoney(acctTotal)}</span></div></div>
+          ${goals.length ? `<div class="budget-row"><div class="budget-top"><span>פנוי (לאחר יעדים)</span><span class="muted">${fmtMoney(acctTotal - goalCommitted)}</span></div></div>` : ''}
+          <div class="small muted" style="margin:4px 0 8px">${accounts.slice(0, 3).map(a => esc(a.name) + ': ' + fmtMoney(a.balance)).join(' · ')}</div>` :
+          '<div class="small muted" style="margin:0 0 8px">הוסיפו את יתרות החשבונות — ותדעו תמיד כמה כסף באמת יש.</div>'}
+        <button class="btn btn-ghost" data-go="accounts">${accounts.length ? 'ניהול חשבונות' : 'הוספת חשבון ראשון'}</button>
+      </div>`;
   // category breakdown (expenses)
   const byCat = {};
   for (const t of txInMonth(mk)) {
@@ -292,6 +310,7 @@ function vDashboard(v) {
     </div>
     ${planNote}
     ${goalsCard}
+    ${accountsCard}
     ${DB.data.tx.length === 0 ? `
       <div class="empty">
         <div class="big">ברוכים הבאים ל־Shekel Sense</div>
@@ -962,6 +981,70 @@ function smartSummaryHTML() {
   return `<div class="card"><h3>סיכום חכם</h3>${shown.map(l => `<div class="smart-line">${l[1]}</div>`).join('')}</div>`;
 }
 
+/* ---------------- bank accounts ---------------- */
+// Manual per-account balances (stock). No bank connection — the user updates
+// the numbers by hand; updatedAt tracks freshness.
+let editingAccount = null;
+function vAccounts(v) {
+  const accounts = (DB.data.accounts || []).slice().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  const ea = editingAccount ? DB.data.accounts.find(a => a.id === editingAccount) : null;
+  if (editingAccount && !ea) editingAccount = null;
+  const isEdit = !!ea;
+  v.innerHTML = `
+    <h2 class="section-title">חשבונות בנק</h2>
+    <div class="card">
+      <h3>${isEdit ? 'עריכת חשבון' : 'חשבון חדש'}</h3>
+      <div class="field"><label>שם החשבון</label><input type="text" id="a-name" placeholder="למשל: הפועלים, מזומן" autocomplete="off" value="${isEdit ? esc(ea.name) : ''}"></div>
+      <div class="field"><label>יתרה נוכחית</label><input type="number" id="a-balance" inputmode="decimal" placeholder="₪" value="${isEdit ? ea.balance : ''}"></div>
+      <button class="btn" id="a-save" style="margin-top:10px">${isEdit ? 'שמירת שינויים' : 'הוספת חשבון'}</button>
+      ${isEdit ? '<button class="btn btn-ghost" id="a-cancel" style="margin-top:10px">ביטול</button>' : ''}
+      <p class="small muted" style="margin-top:8px">יתרה ידנית — עדכנו מדי פעם. אין חיבור לבנק.</p>
+    </div>
+    <div class="card">
+      <h3>החשבונות שלי <span class="pill">${accounts.length}</span></h3>
+      ${accounts.length ? accounts.map(a => `
+        <div class="budget-row">
+          <div class="budget-top"><span>${esc(a.name)}</span>
+            <span class="budget-actions">
+              <span class="muted">${fmtMoney(a.balance)}</span>
+              <button class="tx-edit" data-aedit="${a.id}" aria-label="עריכת חשבון">✎</button>
+              <button class="tx-del" data-adel="${a.id}" aria-label="מחיקת חשבון">×</button>
+            </span></div>
+          <div class="small muted">עודכן: ${fmtDateIL(a.updatedAt) || '—'}</div>
+        </div>`).join('') :
+        '<div class="empty"><div class="big">עוד אין חשבונות</div><div>הוסיפו חשבון ראשון — בנק, מזומן, חיסכון.</div></div>'}
+    </div>
+  `;
+  $('#a-save').addEventListener('click', () => {
+    const name = $('#a-name').value.trim();
+    const balance = parseFloat($('#a-balance').value);
+    if (!name) { toast('נא לתת שם לחשבון'); return; }
+    if (isNaN(balance)) { toast('נא להזין יתרה'); return; }
+    const bal = Math.round(balance * 100) / 100;
+    if (isEdit && ea) {
+      Object.assign(ea, { name, balance: bal, updatedAt: todayISO() });
+      editingAccount = null;
+      toast('החשבון עודכן ✓');
+    } else {
+      DB.data.accounts.push({ id: uid(), name, balance: bal, updatedAt: todayISO() });
+      toast('החשבון נוסף');
+    }
+    DB.save(); render();
+  });
+  const aCancel = $('#a-cancel');
+  if (aCancel) aCancel.addEventListener('click', () => { editingAccount = null; render(); });
+  $$('[data-aedit]', v).forEach(b => b.addEventListener('click', () => {
+    editingAccount = b.dataset.aedit; render();
+    setTimeout(() => { const f = $('#a-save'); if (f) f.scrollIntoView({ behavior: 'auto', block: 'center' }); }, 80);
+  }));
+  $$('[data-adel]', v).forEach(b => b.addEventListener('click', () => {
+    if (!confirm('למחוק את החשבון?')) return;
+    DB.data.accounts = DB.data.accounts.filter(a => a.id !== b.dataset.adel);
+    if (editingAccount === b.dataset.adel) editingAccount = null;
+    DB.save(); render(); toast('החשבון נמחק');
+  }));
+}
+
 /* ---------------- insights ---------------- */
 function vInsights(v) {
   const mk = monthKeyOf(todayISO());
@@ -1331,7 +1414,8 @@ function onBackupFile(e) {
         recurring: d.recurring || [], settings: d.settings || {},
         goals: Array.isArray(d.goals) ? d.goals : [],
         installments: d.installments || [],
-        inbox: Array.isArray(d.inbox) ? d.inbox : []
+        inbox: Array.isArray(d.inbox) ? d.inbox : [],
+        accounts: Array.isArray(d.accounts) ? d.accounts : []
       };
       DB.save(); render(); toast('הגיבוי שוחזר');
     } catch (err) { toast('קובץ הגיבוי לא תקין'); }
