@@ -78,9 +78,9 @@ const CATS = [
 const catById = (id) => CATS.find(c => c.id === id) || CATS[CATS.length - 1];
 
 /* ---------------- store (localStorage, namespaced) ---------------- */
-const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals', installments: 'ss.installments', inbox: 'ss.inbox', accounts: 'ss.accounts' };
+const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals', installments: 'ss.installments', inbox: 'ss.inbox', accounts: 'ss.accounts', closedMonths: 'ss.closedMonths' };
 const DB = {
-  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [], installments: [], inbox: [], accounts: [] },
+  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [], installments: [], inbox: [], accounts: [], closedMonths: [] },
   load() {
     try {
       const raw = localStorage.getItem(K.tx);         if (raw) this.data.tx = JSON.parse(raw);
@@ -92,12 +92,14 @@ const DB = {
       const r7 = localStorage.getItem(K.installments); if (r7) this.data.installments = JSON.parse(r7);
       const r8 = localStorage.getItem(K.inbox);         if (r8) this.data.inbox = JSON.parse(r8);
       const r9 = localStorage.getItem(K.accounts);      if (r9) this.data.accounts = JSON.parse(r9);
+      const r10 = localStorage.getItem(K.closedMonths); if (r10) this.data.closedMonths = JSON.parse(r10);
     } catch (e) { /* corrupted storage -> start clean */ }
     if (!Array.isArray(this.data.tx)) this.data.tx = [];
     if (!Array.isArray(this.data.goals)) this.data.goals = [];
     if (!Array.isArray(this.data.installments)) this.data.installments = [];
     if (!Array.isArray(this.data.inbox)) this.data.inbox = [];
     if (!Array.isArray(this.data.accounts)) this.data.accounts = [];
+    if (!Array.isArray(this.data.closedMonths)) this.data.closedMonths = [];
   },
   save() {
     try {
@@ -110,6 +112,7 @@ const DB = {
       localStorage.setItem(K.installments, JSON.stringify(this.data.installments));
       localStorage.setItem(K.inbox, JSON.stringify(this.data.inbox));
       localStorage.setItem(K.accounts, JSON.stringify(this.data.accounts));
+      localStorage.setItem(K.closedMonths, JSON.stringify(this.data.closedMonths));
     } catch (e) { toast('שמירה נכשלה — אחסון מלא או חסום'); }
   }
 };
@@ -187,6 +190,8 @@ function detectSubscriptions() {
 const ROUTES = ['dashboard', 'transactions', 'add', 'budgets', 'insights', 'import', 'settings', 'goals', 'accounts'];
 let route = 'dashboard';
 let dashMonth = monthKeyOf(todayISO());
+let closingMonth = null;   // month key with the close-month panel open (null = closed)
+let closeAccountId = null; // account picked in the close-month panel
 let txSearch = '';
 let txMonth = monthKeyOf(todayISO());
 
@@ -288,6 +293,40 @@ function vDashboard(v) {
           '<div class="small muted" style="margin:0 0 8px">הוסיפו את יתרות החשבונות — ותדעו תמיד כמה כסף באמת יש.</div>'}
         <button class="btn btn-ghost" data-go="accounts">${accounts.length ? 'ניהול חשבונות' : 'הוספת חשבון ראשון'}</button>
       </div>`;
+  // month close: past months only, applies the recorded net to a chosen account.
+  // One-way and idempotent — a month can never be closed twice.
+  const isPastMonth = mk < monthKeyOf(todayISO());
+  const isClosed = (DB.data.closedMonths || []).includes(mk);
+  let closeBtn = '', closePanel = '';
+  if (isPastMonth && accounts.length) {
+    if (isClosed) {
+      closeBtn = '<div class="small muted" style="text-align:center;margin:6px 0 2px">החודש נסגר ✓</div>';
+    } else {
+      closeBtn = '<button class="btn btn-ghost" id="m-close" style="margin:6px auto 2px;display:block">סגירת חודש</button>';
+    }
+  }
+  if (closingMonth === mk && isPastMonth && !isClosed && accounts.length) {
+    const cMt = monthTotals(mk);
+    const cAcc = accounts.find(a => a.id === closeAccountId) || accounts[0];
+    const cBefore = Number(cAcc.balance) || 0;
+    const cAfter = Math.round((cBefore + cMt.net) * 100) / 100;
+    closePanel = `
+      <div class="card">
+        <h3>סגירת חודש ${hebMonthLabel(mk)}</h3>
+        <div class="budget-row"><div class="budget-top"><span>הכנסות מתועדות</span><span class="muted">${fmtMoney(cMt.inc)}</span></div></div>
+        <div class="budget-row"><div class="budget-top"><span>הוצאות מתועדות</span><span class="muted">${fmtMoney(cMt.exp)}</span></div></div>
+        <div class="budget-row"><div class="budget-top"><span>נטו החודש</span><span class="muted">${fmtMoney(cMt.net)}</span></div></div>
+        <div class="field"><label>החלה על חשבון</label>
+          <select id="c-account">${accounts.map(a => `<option value="${a.id}"${a.id === cAcc.id ? ' selected' : ''}>${esc(a.name)} (${fmtMoney(a.balance)})</option>`).join('')}</select></div>
+        <div class="budget-row"><div class="budget-top"><span>יתרה לפני</span><span class="muted">${fmtMoney(cBefore)}</span></div></div>
+        <div class="budget-row"><div class="budget-top"><span>יתרה אחרי</span><span class="muted">${fmtMoney(cAfter)}</span></div></div>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn" id="c-confirm">אישור סגירה</button>
+          <button class="btn btn-ghost" id="c-cancel">ביטול</button>
+        </div>
+        <p class="small muted" style="margin-top:8px">עסקאות מתועדות בלבד. לא ניתן לסגור חודש פעמיים.</p>
+      </div>`;
+  }
   // category breakdown (expenses)
   const byCat = {};
   for (const t of txInMonth(mk)) {
@@ -303,6 +342,8 @@ function vDashboard(v) {
       <div class="m-label">${hebMonthLabel(mk)}</div>
       <button class="nav-btn" id="m-next" aria-label="חודש הבא">›</button>
     </div>
+    ${closeBtn}
+    ${closePanel}
     <div class="summary-grid">
       <div class="summary-box"><div class="label">הוצאות</div><div class="value expense">${fmtMoney(totExp)}</div></div>
       <div class="summary-box"><div class="label">הכנסות</div><div class="value income">${fmtMoney(totInc)}</div></div>
@@ -332,8 +373,27 @@ function vDashboard(v) {
         <button class="btn btn-ghost" data-go="transactions" style="margin-top:12px">כל העסקאות</button>
       </div>`}
   `;
-  $('#m-prev').addEventListener('click', () => { dashMonth = shiftMonth(dashMonth, -1); render(); });
-  $('#m-next').addEventListener('click', () => { dashMonth = shiftMonth(dashMonth, 1); render(); });
+  $('#m-prev').addEventListener('click', () => { dashMonth = shiftMonth(dashMonth, -1); closingMonth = null; closeAccountId = null; render(); });
+  $('#m-next').addEventListener('click', () => { dashMonth = shiftMonth(dashMonth, 1); closingMonth = null; closeAccountId = null; render(); });
+  const mClose = $('#m-close');
+  if (mClose) mClose.addEventListener('click', () => { closingMonth = mk; closeAccountId = null; render(); });
+  const cCancel = $('#c-cancel');
+  if (cCancel) cCancel.addEventListener('click', () => { closingMonth = null; closeAccountId = null; render(); });
+  const cAccount = $('#c-account');
+  if (cAccount) cAccount.addEventListener('change', (e) => { e.target.blur(); closeAccountId = e.target.value; render(); });
+  const cConfirm = $('#c-confirm');
+  if (cConfirm) cConfirm.addEventListener('click', () => {
+    if ((DB.data.closedMonths || []).includes(mk)) { toast('החודש כבר נסגר'); return; }
+    const acc = DB.data.accounts.find(a => a.id === ($('#c-account') ? $('#c-account').value : null));
+    if (!acc) { toast('נא לבחור חשבון'); return; }
+    const mt = monthTotals(mk);
+    acc.balance = Math.round(((Number(acc.balance) || 0) + mt.net) * 100) / 100;
+    acc.updatedAt = todayISO();
+    DB.data.closedMonths.push(mk);
+    closingMonth = null; closeAccountId = null;
+    DB.save(); render();
+    toast('החודש נסגר ✓ היתרה עודכנה');
+  });
   bindDelete(v);
   bindEdit(v);
 }
@@ -1415,7 +1475,8 @@ function onBackupFile(e) {
         goals: Array.isArray(d.goals) ? d.goals : [],
         installments: d.installments || [],
         inbox: Array.isArray(d.inbox) ? d.inbox : [],
-        accounts: Array.isArray(d.accounts) ? d.accounts : []
+        accounts: Array.isArray(d.accounts) ? d.accounts : [],
+        closedMonths: Array.isArray(d.closedMonths) ? d.closedMonths : []
       };
       DB.save(); render(); toast('הגיבוי שוחזר');
     } catch (err) { toast('קובץ הגיבוי לא תקין'); }
