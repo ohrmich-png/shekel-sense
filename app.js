@@ -71,9 +71,9 @@ const CATS = [
 const catById = (id) => CATS.find(c => c.id === id) || CATS[CATS.length - 1];
 
 /* ---------------- store (localStorage, namespaced) ---------------- */
-const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings' };
+const K = { tx: 'ss.tx', rules: 'ss.rules', budgets: 'ss.budgets', recurring: 'ss.recurring', settings: 'ss.settings', goals: 'ss.goals' };
 const DB = {
-  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {} },
+  data: { tx: [], rules: {}, budgets: {}, recurring: [], settings: {}, goals: [] },
   load() {
     try {
       const raw = localStorage.getItem(K.tx);         if (raw) this.data.tx = JSON.parse(raw);
@@ -81,8 +81,10 @@ const DB = {
       const r3 = localStorage.getItem(K.budgets);     if (r3) this.data.budgets = JSON.parse(r3);
       const r4 = localStorage.getItem(K.recurring);   if (r4) this.data.recurring = JSON.parse(r4);
       const r5 = localStorage.getItem(K.settings);   if (r5) this.data.settings = JSON.parse(r5);
+      const r6 = localStorage.getItem(K.goals);       if (r6) this.data.goals = JSON.parse(r6);
     } catch (e) { /* corrupted storage -> start clean */ }
     if (!Array.isArray(this.data.tx)) this.data.tx = [];
+    if (!Array.isArray(this.data.goals)) this.data.goals = [];
   },
   save() {
     try {
@@ -91,6 +93,7 @@ const DB = {
       localStorage.setItem(K.budgets, JSON.stringify(this.data.budgets));
       localStorage.setItem(K.recurring, JSON.stringify(this.data.recurring));
       localStorage.setItem(K.settings, JSON.stringify(this.data.settings));
+      localStorage.setItem(K.goals, JSON.stringify(this.data.goals));
     } catch (e) { toast('שמירה נכשלה — אחסון מלא או חסום'); }
   }
 };
@@ -165,7 +168,7 @@ function detectSubscriptions() {
 }
 
 /* ---------------- router ---------------- */
-const ROUTES = ['dashboard', 'transactions', 'add', 'budgets', 'insights', 'import', 'settings'];
+const ROUTES = ['dashboard', 'transactions', 'add', 'budgets', 'insights', 'import', 'settings', 'goals'];
 let route = 'dashboard';
 let dashMonth = monthKeyOf(todayISO());
 let txSearch = '';
@@ -186,6 +189,7 @@ function render() {
   else if (route === 'insights') vInsights(v);
   else if (route === 'import') vImport(v);
   else if (route === 'settings') vSettings(v);
+  else if (route === 'goals') vGoals(v);
   bindCommon(v);
 }
 function bindCommon(v) {
@@ -243,6 +247,16 @@ function vDashboard(v) {
   if (pInc > 0) planParts.push('הכנסות מתוכננות ' + fmtMoney(pInc));
   const planNote = planParts.length
     ? `<div class="small muted plan-note">כולל: ${planParts.join(' · ')}</div>` : '';
+  // savings goals preview card (always visible; deposits never touch totals)
+  const goals = (DB.data.goals || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const goalsCard = `
+      <div class="card">
+        <h3>יעדי חיסכון <span class="pill">${goals.length}</span></h3>
+        ${goals.length ? goals.slice(0, 2).map(g => goalCardHTML(g, true)).join('') +
+          '<div class="small muted" style="margin:4px 0 8px">הפקדות ליעדים אינן נרשמות כהוצאות.</div>' :
+          '<div class="small muted" style="margin:0 0 8px">יש לכם חלום? קרן רכב, טיול, חתונה — צרו יעד והפס יתמלא מעצמו.</div>'}
+        <button class="btn btn-ghost" data-go="goals">${goals.length ? 'כל היעדים' : 'יצירת יעד ראשון'}</button>
+      </div>`;
   // category breakdown (expenses)
   const byCat = {};
   for (const t of txInMonth(mk)) {
@@ -264,6 +278,7 @@ function vDashboard(v) {
       <div class="summary-box"><div class="label">מאזן</div><div class="value ${totNet >= 0 ? 'income' : 'expense'}">${fmtMoney(totNet)}</div></div>
     </div>
     ${planNote}
+    ${goalsCard}
     ${DB.data.tx.length === 0 ? `
       <div class="empty">
         <div class="big">ברוכים הבאים ל־Shekel Sense</div>
@@ -641,6 +656,110 @@ function plannedForMonth(mk) {
   return out;
 }
 
+/* ---------------- savings goals ---------------- */
+// Envelope-style goals: deposits are a personal tracking track, separate from
+// transactions — they never touch monthly totals or budgets.
+function goalPct(g) {
+  const t = Number(g.target) || 0;
+  return t > 0 ? Math.min(100, Math.round(Number(g.saved) / t * 100)) : 0;
+}
+function goalETA(g) {
+  const t = Number(g.target) || 0, sv = Number(g.saved) || 0, m = Number(g.monthly) || 0;
+  const left = t - sv;
+  if (left <= 0) return '🎉 היעד הושלם';
+  if (m > 0) {
+    const n = Math.ceil(left / m);
+    return 'נותרו ' + fmtMoney(left) + ' · בקצב הנוכחי — בעוד כ־' + n + (n === 1 ? ' חודש' : n === 2 ? ' חודשיים' : ' חודשים');
+  }
+  return 'נותרו ' + fmtMoney(left);
+}
+function goalCardHTML(g, compact) {
+  const pct = goalPct(g);
+  const gid = g.id;
+  return `
+  <div class="budget-row goal" data-goal="${gid}">
+    <div class="budget-top"><span>${esc(g.name)}</span>
+      <span class="muted">${fmtMoney(g.saved)} / ${fmtMoney(g.target)}</span></div>
+    <div class="bar"><i style="width:${pct}%;background:linear-gradient(90deg,var(--gold-dim),var(--gold))"></i></div>
+    <div class="small ${pct >= 100 ? '' : 'muted'}" style="margin-top:4px">${goalETA(g)} · ${pct}%</div>
+    ${compact ? '' : `
+    <div class="goal-ops" style="display:none">
+      <div class="btn-row" style="margin-top:8px">
+        <div class="field" style="flex:1;margin:0"><label>סכום</label>
+          <input type="number" class="goal-amt" inputmode="decimal" min="0" placeholder="₪"></div>
+        <button class="btn btn-ghost goal-dep" style="align-self:flex-end">הפקדה</button>
+        <button class="btn btn-ghost goal-wd" style="align-self:flex-end">משיכה</button>
+      </div>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-ghost goal-toggle">הפקדה / משיכה</button>
+      <button class="btn btn-ghost btn-danger goal-del">מחיקת יעד</button>
+    </div>`}
+  </div>`;
+}
+function vGoals(v) {
+  const goals = (DB.data.goals || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  v.innerHTML = `
+    <h2 class="section-title">יעדי חיסכון</h2>
+    <div class="card">
+      <h3>יעד חדש</h3>
+      <div class="field"><label>שם היעד</label><input type="text" id="g-name" placeholder="למשל: קרן רכב"></div>
+      <div class="btn-row">
+        <div class="field" style="flex:1;margin:0"><label>סכום יעד</label><input type="number" id="g-target" inputmode="decimal" min="0" placeholder="₪"></div>
+        <div class="field" style="flex:1;margin:0"><label>הפקדה חודשית (לא חובה)</label><input type="number" id="g-monthly" inputmode="decimal" min="0" placeholder="₪"></div>
+      </div>
+      <button class="btn" id="g-add" style="margin-top:10px">יצירת יעד</button>
+      <p class="small muted" style="margin-top:8px">הפקדות ליעדים הן מעקב אישי — אינן נרשמות כהוצאות ואינן משפיעות על התקציב.</p>
+    </div>
+    <div class="card">
+      <h3>היעדים שלי <span class="pill">${goals.length}</span></h3>
+      ${goals.length ? goals.map(g => goalCardHTML(g, false)).join('') :
+        '<div class="empty"><div class="big">עוד אין יעדים</div><div>צרו יעד ראשון — רכב, טיול, חתונה — והפס יתמלא מעצמו.</div></div>'}
+    </div>
+  `;
+  $('#g-add').addEventListener('click', () => {
+    const name = $('#g-name').value.trim();
+    const target = parseFloat($('#g-target').value);
+    const monthly = parseFloat($('#g-monthly').value);
+    if (!name) { toast('נא לתת שם ליעד'); return; }
+    if (!target || target <= 0) { toast('נא להזין סכום יעד'); return; }
+    DB.data.goals.push({
+      id: uid(), name, target: Math.round(target * 100) / 100,
+      monthly: monthly > 0 ? Math.round(monthly * 100) / 100 : 0,
+      saved: 0, createdAt: Date.now()
+    });
+    DB.save(); render(); toast('היעד נוצר — בהצלחה!');
+  });
+  $$('.goal', v).forEach(card => {
+    const gid = card.dataset.goal;
+    const get = () => DB.data.goals.find(g => g.id === gid);
+    const ops = $('.goal-ops', card);
+    $('.goal-toggle', card).addEventListener('click', () => {
+      ops.style.display = ops.style.display === 'none' ? '' : 'none';
+    });
+    $('.goal-dep', card).addEventListener('click', () => {
+      const g = get(); if (!g) return;
+      const amt = parseFloat($('.goal-amt', card).value);
+      if (!amt || amt <= 0) { toast('נא להזין סכום'); return; }
+      g.saved = Math.round(((Number(g.saved) || 0) + amt) * 100) / 100;
+      DB.save(); render();
+      toast(goalPct(g) >= 100 ? 'היעד הושלם! 🎉' : 'ההפקדה נרשמה');
+    });
+    $('.goal-wd', card).addEventListener('click', () => {
+      const g = get(); if (!g) return;
+      const amt = parseFloat($('.goal-amt', card).value);
+      if (!amt || amt <= 0) { toast('נא להזין סכום'); return; }
+      g.saved = Math.max(0, Math.round(((Number(g.saved) || 0) - amt) * 100) / 100);
+      DB.save(); render(); toast('המשיכה נרשמה');
+    });
+    $('.goal-del', card).addEventListener('click', () => {
+      if (!confirm('למחוק את היעד? ההתקדמות תימחק.')) return;
+      DB.data.goals = DB.data.goals.filter(g => g.id !== gid);
+      DB.save(); render(); toast('היעד נמחק');
+    });
+  });
+}
+
 /* ---------------- insights ---------------- */
 function vInsights(v) {
   const mk = monthKeyOf(todayISO());
@@ -900,7 +1019,8 @@ function onBackupFile(e) {
       if (!confirm('הייבוא יחליף את כל הנתונים הנוכחיים. להמשיך?')) return;
       DB.data = {
         tx: d.tx || [], rules: d.rules || {}, budgets: d.budgets || {},
-        recurring: d.recurring || [], settings: d.settings || {}
+        recurring: d.recurring || [], settings: d.settings || {},
+        goals: Array.isArray(d.goals) ? d.goals : []
       };
       DB.save(); render(); toast('הגיבוי שוחזר');
     } catch (err) { toast('קובץ הגיבוי לא תקין'); }
